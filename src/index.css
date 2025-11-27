@@ -1,0 +1,82 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg: #0d1117;
+  --color-card: #161b22;
+  --color-brand: #2563eb;
+  --color-brand-hover: #1d4ed8;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  background: linear-gradient(135deg, #0d1117 0%, #161b22 100%);
+}
+
+body {
+  @apply bg-bg text-slate-200;
+}
+
+/* Animations */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in-up {
+  animation: fadeInUp 0.6s ease-out;
+}
+
+/* Components */
+.btn {
+  @apply inline-flex items-center justify-center rounded-xl px-6 py-3 font-semibold bg-brand text-white hover:bg-brand-hover transition-all duration-200 shadow-lg;
+}
+
+.btn-sec {
+  @apply inline-flex items-center justify-center rounded-xl px-4 py-2 font-medium bg-slate-700/80 hover:bg-slate-600 transition-all duration-200;
+}
+
+.card {
+  @apply bg-card/90 border border-slate-800/50 rounded-2xl p-6 backdrop-blur-sm;
+}
+
+.feature-card {
+  @apply bg-gradient-to-br from-card/90 to-card/70 border border-slate-800/50 rounded-2xl p-8 backdrop-blur-sm hover:border-slate-700/70 transition-all duration-300;
+}
+
+.kbd {
+  @apply border border-slate-600/70 rounded px-2 text-slate-300;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(71, 85, 105, 0.5);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(71, 85, 105, 0.7);
+}
