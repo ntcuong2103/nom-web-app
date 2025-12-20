@@ -10,11 +10,48 @@ import { absToNorm, normToAbs, toYoloTxt } from "../utils/yolo.js";
 import { exportAll } from "../utils/zip.js";
 import { detectBoxes } from "../utils/detector.js";
 import { Annotorious } from "@recogito/annotorious";
+import OcrRecognizer from "./OCRRecognizer.jsx";
 
 const xywh = (x, y, w, h) =>
   `xywh=pixel:${Math.round(x)},${Math.round(y)},${Math.round(w)},${Math.round(
     h
   )}`;
+
+// Convert a File to base64 string (data portion only)
+const fileToBase64 = (file) =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = () => {
+      const base64 = reader.result.split(",")[1];
+      resolve(base64);
+    };
+    reader.onerror = (error) => reject(error);
+  });
+
+// Create a storable object for localStorage
+const fileToStorable = async (file) => ({
+  name: file.name,
+  size: file.size,
+  type: file.type,
+  lastModified: file.lastModified,
+  data: await fileToBase64(file),
+});
+
+// Upsert a label file into localStorage so File Manager can reload it later
+const persistLabelToLocalStorage = async (labelFile) => {
+  const existingLabels = JSON.parse(
+    localStorage.getItem("hn_saved_labels") || "[]"
+  );
+
+  const filtered = existingLabels.filter((s) => s.name !== labelFile.name);
+  const storable = await fileToStorable(labelFile);
+
+  localStorage.setItem(
+    "hn_saved_labels",
+    JSON.stringify([...filtered, storable])
+  );
+};
 
 function usePairs() {
   const [pairs, setPairs] = useState([]);
@@ -102,13 +139,27 @@ export default function AnnotationEditor() {
   const [pairs, setPairs] = usePairs();
   const [idx, setIdx] = useState(0);
   const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 }); // Pan position for dragging zoomed image
+  const [isPanning, setIsPanning] = useState(false); // Is currently panning
+  const [panStart, setPanStart] = useState({ x: 0, y: 0 }); // Mouse position when pan started
   const [selId, setSelId] = useState(null);
   const [annotations, setAnnotations] = useState([]); // Direct state management like working project
   const [annotationsReady, setAnnotationsReady] = useState(false); // Trigger for annotations
+  // OCR multi-select support
+  const [ocrSelectedIds, setOcrSelectedIds] = useState([]);
+  const [ocrMultiSelect, setOcrMultiSelect] = useState(false);
+  // Refs to hold current values for formatter closure
+  const ocrSelectedIdsRef = useRef([]);
+  const ocrMultiSelectRef = useRef(false);
   const [imageContainerSize, setImageContainerSize] = useState({
     width: 0,
     height: 0,
   });
+  const [ocrEndpoint, setOcrEndpoint] = useState(
+    localStorage.getItem("hn_ocrUrl") || ""
+  );
+  // moved below to ensure `loc` is initialized
+  const [ocrResults, setOcrResults] = useState(new Map());
 
   const loc = useLocation();
   const nav = useNavigate();
@@ -117,8 +168,20 @@ export default function AnnotationEditor() {
   const singleFile = loc.state?.singleFile;
   const fileIndex = loc.state?.fileIndex;
 
+  // Ensure OCR endpoint stays in sync after navigation or external changes
+  useEffect(() => {
+    const stored = localStorage.getItem("hn_ocrUrl") || "";
+    if (stored !== ocrEndpoint) setOcrEndpoint(stored);
+  }, [loc.state]);
+
   // Refs for scroll functionality
   const annotationsListRef = useRef(null);
+
+  // Keep ref in sync with state for formatter
+  useEffect(() => {
+    ocrSelectedIdsRef.current = ocrSelectedIds;
+    ocrMultiSelectRef.current = ocrMultiSelect;
+  }, [ocrSelectedIds, ocrMultiSelect]);
 
   // Set index from navigation state for single file mode
   useEffect(() => {
@@ -176,8 +239,9 @@ export default function AnnotationEditor() {
     const im = new Image();
     im.onload = () => {
       setNatural({ w: im.naturalWidth, h: im.naturalHeight });
-      // Reset zoom when new image loads
+      // Reset zoom and pan when new image loads
       setZoom(1);
+      setPan({ x: 0, y: 0 });
     };
     im.src = url;
 
@@ -199,40 +263,145 @@ export default function AnnotationEditor() {
   }, []);
 
   // Convert YOLO -> W3C
-  const yoloToW3C = (yolos) =>
-    (yolos || []).map((b, i) => {
-      const r = normToAbs(b, natural.w, natural.h);
-      return {
-        id: `${pair.baseName}-${i}`,
-        type: "Annotation",
-        body: [
-          {
+  const yoloToW3C = (yolos) => {
+    // Guard against invalid natural dimensions
+    if (!natural.w || !natural.h) {
+      console.warn("yoloToW3C: Invalid natural dimensions", natural);
+      return [];
+    }
+
+    return (yolos || [])
+      .map((b, i) => {
+        if (!b || typeof b.x !== "number" || typeof b.y !== "number") {
+          console.warn("yoloToW3C: Invalid bounding box", b);
+          return null;
+        }
+
+        const r = normToAbs(b, natural.w, natural.h);
+
+        // Build annotation bodies
+        const bodies = [];
+
+        // Add OCR result if exists
+        if (b.ocrText && b.ocrText !== "—") {
+          // Add OCR result body (JSON format)
+          const ocrResult = {
+            text: b.ocrText,
+            ids: b.ids || "",
+            confidence: 1.0, // Default confidence when importing
+          };
+
+          bodies.push({
+            type: "TextualBody",
+            value: JSON.stringify(ocrResult),
+            purpose: "ocrResult",
+          });
+
+          // Add tagging body with OCR text
+          bodies.push({
+            type: "TextualBody",
+            value: b.ocrText,
+            purpose: "tagging",
+          });
+
+          // Store in ocrResults map for display
+          const annotationId = `${pair.baseName}-${i}`;
+          setOcrResults((prev) => new Map(prev).set(annotationId, ocrResult));
+        } else {
+          // No OCR result, add default class tag
+          bodies.push({
             type: "TextualBody",
             value: `Class ${b.cls ?? 0}`,
             purpose: "tagging",
+          });
+        }
+
+        return {
+          id: `${pair.baseName}-${i}`,
+          type: "Annotation",
+          body: bodies,
+          target: {
+            source: imgURL,
+            selector: {
+              type: "FragmentSelector",
+              conformsTo: "http://www.w3.org/TR/media-frags/",
+              value: xywh(r.x, r.y, r.w, r.h),
+            },
           },
-        ],
-        target: {
-          source: imgURL,
-          selector: {
-            type: "FragmentSelector",
-            conformsTo: "http://www.w3.org/TR/media-frags/",
-            value: xywh(r.x, r.y, r.w, r.h),
-          },
-        },
-      };
-    });
+        };
+      })
+      .filter(Boolean);
+  };
 
   // Convert W3C -> YOLO (đọc từ Annotorious)
   const w3cToYolo = (w3c) => {
+    if (!natural.w || !natural.h) {
+      console.warn("w3cToYolo: Invalid natural dimensions", natural);
+      return [];
+    }
+
     const out = [];
-    for (const a of w3c) {
+    for (const a of w3c || []) {
       const v = a?.target?.selector?.value || ""; // "xywh=pixel:x,y,w,h"
-      const m = v.match(/xywh=pixel:(\d+),(\d+),(\d+),(\d+)/);
-      if (!m) continue;
+      const m = v.match(
+        /xywh=pixel:(\d+(?:\.\d+)?),(\d+(?:\.\d+)?),(\d+(?:\.\d+)?),(\d+(?:\.\d+)?)/
+      );
+      if (!m) {
+        console.warn("w3cToYolo: Invalid selector value:", v);
+        continue;
+      }
       const [, x, y, w, h] = m.map(Number);
+
+      if (
+        !Number.isFinite(x) ||
+        !Number.isFinite(y) ||
+        !Number.isFinite(w) ||
+        !Number.isFinite(h)
+      ) {
+        console.warn("w3cToYolo: Non-finite values", { x, y, w, h });
+        continue;
+      }
+
       const norm = absToNorm({ x, y, w, h }, natural.w, natural.h);
-      out.push({ cls: 0, ...norm });
+
+      // Extract OCR text and IDS from annotation body
+      let ocrText = "";
+      let ids = "";
+
+      if (a.body && Array.isArray(a.body)) {
+        // Find OCR result body
+        const ocrBody = a.body.find((b) => b.purpose === "ocrResult");
+        if (ocrBody && ocrBody.value) {
+          try {
+            const ocrResult = JSON.parse(ocrBody.value);
+            ocrText = ocrResult.text || "";
+            ids = ocrResult.ids || "";
+          } catch (e) {
+            console.warn("Failed to parse OCR result:", e);
+          }
+        }
+
+        // Fallback: try to find tagging body with OCR text
+        if (!ocrText) {
+          const tagBody = a.body.find(
+            (b) =>
+              b.purpose === "tagging" &&
+              b.value &&
+              b.value !== "Class 0" &&
+              !b.value.startsWith("Class ")
+          );
+          if (tagBody) {
+            ocrText = tagBody.value;
+          }
+        }
+      }
+
+      out.push({
+        cls: 0,
+        ...norm,
+        ocrText: ocrText || "—",
+        ids: ids || "",
+      });
     }
     return out;
   };
@@ -252,12 +421,36 @@ export default function AnnotationEditor() {
       image: imgRef.current,
       drawOnSingleClick: true,
       allowEmpty: true,
+      formatter: (annotation) => {
+        const hasOcrResult = annotation.body?.some(
+          (b) => b.purpose === "ocrResult"
+        );
+        const isOcrTarget = ocrSelectedIdsRef.current.includes(annotation.id);
+        // Priority: ocr-completed (green) takes precedence over ocr-target (yellow)
+        if (hasOcrResult) {
+          return "ocr-completed";
+        }
+        if (isOcrTarget) {
+          return "ocr-target";
+        }
+        return "";
+      },
     });
     annoRef.current = anno;
 
     // Handle selection changes
     anno.on("selectAnnotation", (annotation) => {
-      setSelId(annotation?.id || null);
+      const id = annotation?.id || null;
+      setSelId(id);
+      // In OCR multi-select mode, toggle into the selection set
+      if (id && ocrMultiSelectRef.current) {
+        setOcrSelectedIds((prev) => {
+          const set = new Set(prev);
+          if (set.has(id)) set.delete(id);
+          else set.add(id);
+          return Array.from(set);
+        });
+      }
 
       // Auto scroll to selected annotation in list (center in the list container)
       if (annotation?.id && annotationsListRef.current) {
@@ -270,15 +463,25 @@ export default function AnnotationEditor() {
           console.log("  Found element:", annotationElement);
 
           if (annotationElement) {
-            console.log(
-              "✅ Found element, using scrollIntoView for perfect center"
-            );
+            console.log("✅ Found element, scrolling within container only");
 
-            // Use scrollIntoView with center alignment for precise centering
-            annotationElement.scrollIntoView({
+            // Manual scroll calculation to prevent page scroll
+            const container = annotationsListRef.current;
+            const elementTop = annotationElement.offsetTop;
+            const elementHeight = annotationElement.offsetHeight;
+            const containerHeight = container.clientHeight;
+            const containerScrollTop = container.scrollTop;
+
+            // Calculate target scroll to center element
+            const scrollTo =
+              elementTop - containerHeight / 2 + elementHeight / 2;
+            const maxScroll = container.scrollHeight - containerHeight;
+            const targetScroll = Math.max(0, Math.min(scrollTo, maxScroll));
+
+            // Scroll only within container
+            container.scrollTo({
+              top: targetScroll,
               behavior: "smooth",
-              block: "center",
-              inline: "nearest",
             });
 
             // Add highlight pulse after scroll
@@ -367,22 +570,30 @@ export default function AnnotationEditor() {
     });
 
     // Seed annotations from YOLO (nếu có)
-    if (pair.annotations?.length) {
+    // Only seed if we have valid dimensions
+    if (pair.annotations?.length && natural.w && natural.h) {
       const w3cAnnotations = yoloToW3C(pair.annotations);
-      anno.setAnnotations(w3cAnnotations);
-      // 🔧 FIX: Set React state directly like working project
-      setAnnotations(w3cAnnotations);
-      console.log(
-        "✅ Seeded annotations to both Annotorious and React state:",
-        w3cAnnotations.length
-      );
-      // Trigger annotations re-computation
-      setAnnotationsReady(true);
+      if (w3cAnnotations.length > 0) {
+        anno.setAnnotations(w3cAnnotations);
+        // 🔧 FIX: Set React state directly like working project
+        setAnnotations(w3cAnnotations);
+        console.log(
+          "✅ Seeded annotations to both Annotorious and React state:",
+          w3cAnnotations.length
+        );
+        // Trigger annotations re-computation
+        setAnnotationsReady(true);
+      }
     }
 
     // API mode: auto-detect nếu chưa có (và đồng bộ VỚI React state)
     (async () => {
-      if (apiMode && (!pair.annotations || !pair.annotations.length)) {
+      if (
+        apiMode &&
+        (!pair.annotations || !pair.annotations.length) &&
+        natural.w &&
+        natural.h
+      ) {
         try {
           const detections = await detectBoxes({
             endpointUrl: apiUrl,
@@ -394,20 +605,30 @@ export default function AnnotationEditor() {
             (b) =>
               Number.isFinite(b.x) &&
               Number.isFinite(b.y) &&
-              Number.isFinite(b.width) &&
-              Number.isFinite(b.height)
+              (Number.isFinite(b.w) || Number.isFinite(b.width)) &&
+              (Number.isFinite(b.h) || Number.isFinite(b.height))
           );
 
-          // 2) Chuẩn hoá về YOLO normalized theo kích thước ảnh tự nhiên
-          const W = natural?.w || 1;
-          const H = natural?.h || 1;
-          pair.annotations = valid.map((b) => ({
-            cls: 0,
-            x: (b.x + b.width / 2) / W,
-            y: (b.y + b.height / 2) / H,
-            w: b.width / W,
-            h: b.height / H,
-          }));
+          if (!valid.length) {
+            console.warn("No valid detections found");
+            return;
+          }
+
+          // 2) Chuẩn hoá về YOLO normalized (center x, center y, width, height)
+          const W = natural.w;
+          const H = natural.h;
+          pair.annotations = valid.map((b) => {
+            // Handle both formats: (x, y, w, h) or (x, y, width, height)
+            const w = b.w ?? b.width ?? 0;
+            const h = b.h ?? b.height ?? 0;
+            return {
+              cls: 0,
+              x: (b.x + w / 2) / W, // Center X in normalized coordinates
+              y: (b.y + h / 2) / H, // Center Y in normalized coordinates
+              w: w / W, // Width in normalized coordinates
+              h: h / H, // Height in normalized coordinates
+            };
+          });
 
           // 3) Convert sang W3C và gán cho Annotorious
           const w3cAnnotations = yoloToW3C(pair.annotations);
@@ -423,6 +644,7 @@ export default function AnnotationEditor() {
             boxes: w3cAnnotations.length,
             W,
             H,
+            detections: pair.annotations,
           });
         } catch (e) {
           console.error("❌ Remote detect failed:", e);
@@ -437,18 +659,58 @@ export default function AnnotationEditor() {
       setAnnotations([]);
       setAnnotationsReady(false);
     };
-  }, [imgURL, natural.w, natural.h, apiMode, apiUrl]);
+  }, [imgURL, natural.w, natural.h, apiMode, apiUrl, pair]);
 
   // Zoom functions
   const zoomIn = () => setZoom((prev) => Math.min(prev * 1.2, 5));
   const zoomOut = () => setZoom((prev) => Math.max(prev / 1.2, 0.1));
-  const zoomFit = () => setZoom(1);
+  const zoomFit = () => {
+    setZoom(1);
+    setPan({ x: 0, y: 0 }); // Reset pan when fitting
+  };
 
-  // Navigation
-  const canPrev = idx > 0;
-  const canNext = idx < pairs.length - 1;
-  const prev = () => canPrev && setIdx(idx - 1);
-  const next = () => canNext && setIdx(idx + 1);
+  // Pan handlers - only pan when clicking on container background, not on image
+  const handlePanStart = (e) => {
+    // Only start panning if clicking on the container background (not on image or its wrapper)
+    // Check if the click target is NOT the image or inside the image wrapper
+    const clickedOnImage =
+      imgRef.current &&
+      (e.target === imgRef.current || imgRef.current.contains(e.target));
+
+    if (
+      !clickedOnImage &&
+      (e.target === containerRef.current ||
+        e.target.classList.contains("pan-handle"))
+    ) {
+      setIsPanning(true);
+      setPanStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
+      e.preventDefault();
+    }
+  };
+
+  const handlePanMove = (e) => {
+    if (!isPanning) return;
+    setPan({
+      x: e.clientX - panStart.x,
+      y: e.clientY - panStart.y,
+    });
+  };
+
+  const handlePanEnd = () => {
+    setIsPanning(false);
+  };
+
+  // Add pan move/end listeners
+  useEffect(() => {
+    if (isPanning) {
+      window.addEventListener("mousemove", handlePanMove);
+      window.addEventListener("mouseup", handlePanEnd);
+      return () => {
+        window.removeEventListener("mousemove", handlePanMove);
+        window.removeEventListener("mouseup", handlePanEnd);
+      };
+    }
+  }, [isPanning, panStart, pan]);
 
   // Add new annotation
   const addAnnotation = () => {
@@ -493,18 +755,84 @@ export default function AnnotationEditor() {
     }
   };
 
+  // Handle OCR result callback - Save results to annotations
+  const handleOcrResult = (annotationId, result) => {
+    console.log(`OCR result for ${annotationId}:`, result);
+    setOcrResults((prev) => new Map(prev).set(annotationId, result));
+
+    // Save OCR result to annotation body
+    if (annoRef.current) {
+      const annotations = annoRef.current.getAnnotations();
+      const annotation = annotations.find((a) => a.id === annotationId);
+      if (annotation) {
+        // Update annotation body with OCR result (preserve existing bodies)
+        const existingBodies = (annotation.body || []).filter(
+          (b) => b.purpose !== "ocrResult"
+        );
+        const updatedAnnotation = {
+          ...annotation,
+          body: [
+            ...existingBodies,
+            {
+              type: "TextualBody",
+              value: JSON.stringify(result),
+              purpose: "ocrResult",
+            },
+            {
+              type: "TextualBody",
+              value: result.text || "—",
+              purpose: "tagging",
+            },
+          ],
+        };
+
+        // Update in Annotorious
+        annoRef.current.removeAnnotation(annotation);
+        annoRef.current.addAnnotation(updatedAnnotation);
+
+        // Update React state
+        setAnnotations((prev) =>
+          prev.map((a) => (a.id === annotationId ? updatedAnnotation : a))
+        );
+
+        // Force re-render to apply formatter class
+        setTimeout(() => {
+          if (annoRef.current) {
+            const allAnnotations = annoRef.current.getAnnotations();
+            annoRef.current.setAnnotations(allAnnotations);
+          }
+        }, 50);
+
+        console.log(`✅ Saved OCR result to annotation ${annotationId}`);
+      }
+    }
+  };
+
   // Save current annotations
-  const save = () => {
+  const save = async () => {
     if (!annoRef.current) return;
-    const annotations = annoRef.current.getAnnotations();
-    const yoloData = w3cToYolo(annotations);
 
-    // Update pair data
-    pair.annotations = yoloData;
+    const annotationsFromCanvas = annoRef.current.getAnnotations();
+    const yoloData = w3cToYolo(annotationsFromCanvas);
+    const yoloTxt = toYoloTxt(yoloData);
 
-    // Update session storage
+    // Ensure we have a label file with the latest content
+    const labelName = pair.label?.name || `${pair.baseName}.txt`;
+    const labelFile = new File([yoloTxt], labelName, {
+      type: "text/plain",
+      lastModified: Date.now(),
+    });
+
+    const updatedPair = {
+      ...pair,
+      label: labelFile,
+      annotations: yoloData,
+    };
+
+    // Update in-memory pairs and sessionStorage (Files are stripped when stringified)
     const updatedPairs = [...pairs];
-    updatedPairs[idx] = pair;
+    updatedPairs[idx] = updatedPair;
+    setPairs(updatedPairs);
     sessionStorage.setItem(
       "hn_pairs",
       JSON.stringify(updatedPairs, (k, v) =>
@@ -512,9 +840,26 @@ export default function AnnotationEditor() {
       )
     );
 
+    // Keep __HN_FILES__ in sync for the current session
+    const key = updatedPair.key || updatedPair.fullName || updatedPair.baseName;
+    const fileMap = window.__HN_FILES__ || {};
+    fileMap[key] = updatedPair;
+    window.__HN_FILES__ = fileMap;
+
+    // Persist label to localStorage so File Manager can reload it on next open
+    await persistLabelToLocalStorage(labelFile);
+
     console.log("Annotations saved:", yoloData);
     alert("Annotations saved successfully!");
   };
+
+  // Refresh annotorious classes when OCR selection set changes
+  useEffect(() => {
+    if (annoRef.current) {
+      const all = annoRef.current.getAnnotations();
+      annoRef.current.setAnnotations(all);
+    }
+  }, [ocrSelectedIds]);
 
   // Export
   const exportAnnotations = async () => {
@@ -600,20 +945,6 @@ export default function AnnotationEditor() {
 
         <div className="flex items-center gap-3">
           <button
-            onClick={prev}
-            disabled={!canPrev}
-            className="px-3 py-1 bg-slate-700 text-slate-300 rounded-lg hover:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm"
-          >
-            ← Previous
-          </button>
-          <button
-            onClick={next}
-            disabled={!canNext}
-            className="px-3 py-1 bg-slate-700 text-slate-300 rounded-lg hover:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm"
-          >
-            Next →
-          </button>
-          <button
             onClick={save}
             className="px-3 py-1 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm"
           >
@@ -629,138 +960,11 @@ export default function AnnotationEditor() {
       </div>
 
       <div className="flex flex-1 min-h-0">
-        {/* Left Sidebar - Fixed width */}
-        <div className="w-80 bg-slate-800 border-r border-slate-700 flex flex-col h-full flex-shrink-0">
-          {/* All Annotations Header - Move to top */}
-          <div className="p-4 border-b border-slate-700 flex-shrink-0">
-            <h2 className="text-lg font-semibold text-slate-200 mb-3">
-              All Annotations
-              <span className="ml-2 text-sm text-slate-400">
-                ({annotations.length})
-              </span>
-            </h2>
-            <button
-              onClick={addAnnotation}
-              className="w-full px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center justify-center gap-2 text-sm"
-            >
-              <svg
-                className="w-4 h-4"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M12 6v6m0 0v6m0-6h6m-6 0H6"
-                />
-              </svg>
-              Add Annotation
-            </button>
-          </div>
-
-          {/* Annotations List - Fixed 50% height with clear separation */}
-          <div className="px-2 py-3">
-            <div
-              ref={annotationsListRef}
-              className="overflow-auto scroll-smooth bg-slate-800/30 rounded-lg border border-slate-600/50 shadow-inner"
-              style={{
-                maxHeight: "35vh",
-                minHeight: "35vh",
-                scrollBehavior: "smooth",
-              }}
-            >
-              {annotations.length === 0 ? (
-                <div className="p-4 text-center text-slate-400">
-                  <p>No annotations yet.</p>
-                  <p className="text-sm mt-1">
-                    Click "Add Annotation" or draw directly on the image.
-                  </p>
-                  <p className="text-xs mt-2 text-slate-500">
-                    Debug: annotations.length = {annotations.length}
-                  </p>
-                </div>
-              ) : (
-                <div className="p-3 space-y-3 py-4">
-                  {/* Top spacer for better viewport */}
-                  <div className="h-2"></div>
-
-                  {annotations.map((ann, i) => {
-                    const isSelected = ann.id === selId;
-                    const match = ann.target?.selector?.value?.match(
-                      /xywh=pixel:(\d+),(\d+),(\d+),(\d+)/
-                    );
-                    const coords = match ? `(${match[1]}, ${match[2]})` : "";
-                    const size = match ? `${match[3]} × ${match[4]}` : "";
-
-                    // Debug first annotation render
-                    if (i === 0) {
-                      console.log(
-                        "🔄 Rendering annotations list:",
-                        annotations.length,
-                        "items"
-                      );
-                    }
-
-                    return (
-                      <div
-                        key={ann.id}
-                        data-annotation-id={ann.id}
-                        className={`p-3 rounded-lg border cursor-pointer transition-all duration-200 ${
-                          isSelected
-                            ? "bg-blue-500/30 border-blue-400 shadow-lg shadow-blue-500/20"
-                            : "bg-slate-700/50 border-slate-600 hover:bg-slate-700 hover:border-slate-500"
-                        }`}
-                        onClick={() => {
-                          annoRef.current?.selectAnnotation(ann.id);
-                          setSelId(ann.id);
-                        }}
-                      >
-                        <div className="flex items-center justify-between">
-                          <span
-                            className={`text-sm font-medium transition-colors ${
-                              isSelected ? "text-blue-200" : "text-slate-200"
-                            }`}
-                          >
-                            Class 0
-                          </span>
-                          <span
-                            className={`text-xs transition-colors ${
-                              isSelected ? "text-blue-300" : "text-slate-400"
-                            }`}
-                          >
-                            #{i + 1}
-                          </span>
-                        </div>
-                        <div
-                          className={`text-xs mt-1 transition-colors ${
-                            isSelected ? "text-blue-300" : "text-slate-400"
-                          }`}
-                        >
-                          Position: {coords}
-                        </div>
-                        <div
-                          className={`text-xs transition-colors ${
-                            isSelected ? "text-blue-300" : "text-slate-400"
-                          }`}
-                        >
-                          Size: {size}
-                        </div>
-                      </div>
-                    );
-                  })}
-
-                  {/* Bottom spacer for better viewport */}
-                  <div className="h-2"></div>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Selected Annotation Panel - Move to bottom */}
-          {selId && (
-            <div className="p-4 border-t border-slate-700 bg-slate-800/50 flex-shrink-0">
+        {/* Left Sidebar - Selected Annotation Info */}
+        <div className="w-64 bg-slate-800 border-r border-slate-700 flex flex-col h-full flex-shrink-0">
+          {/* Selected Annotation Panel */}
+          {selId ? (
+            <div className="p-4 flex-1 overflow-auto">
               <h3 className="text-sm font-semibold text-slate-200 mb-3 flex items-center gap-2">
                 <div className="w-2 h-2 bg-blue-400 rounded-full"></div>
                 Selected Annotation
@@ -799,6 +1003,46 @@ export default function AnnotationEditor() {
                   </div>
                 );
               })()}
+              {/* OCR Result */}
+              {ocrResults.get(selId) && (
+                <div className="mt-4 pt-4 border-t border-slate-700 space-y-2">
+                  <div className="text-xs uppercase tracking-wider text-blue-400/70 font-semibold">
+                    OCR Result
+                  </div>
+                  {(() => {
+                    const result = ocrResults.get(selId);
+                    return (
+                      <div className="bg-gradient-to-br from-blue-900/40 to-slate-900/40 border border-blue-700/50 rounded-lg p-3 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-lg font-bold text-blue-200">
+                            {result.text || "—"}
+                          </span>
+                          {result.confidence !== undefined && (
+                            <span className="text-xs font-medium text-green-300">
+                              {(result.confidence * 100).toFixed(0)}%
+                            </span>
+                          )}
+                        </div>
+                        {result.ids && (
+                          <div>
+                            <span className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">
+                              IDS
+                            </span>
+                            <div className="text-xs font-mono text-slate-300 break-all">
+                              {result.ids}
+                            </div>
+                          </div>
+                        )}
+                        {result.error && (
+                          <div className="text-xs text-red-300">
+                            ⚠ {result.error}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
               <button
                 onClick={deleteSelected}
                 className="w-full mt-3 px-3 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors flex items-center justify-center gap-2 text-sm"
@@ -818,6 +1062,10 @@ export default function AnnotationEditor() {
                 </svg>
                 Delete Annotation
               </button>
+            </div>
+          ) : (
+            <div className="p-4 text-center text-slate-400 flex items-center justify-center h-full">
+              <p>Select an annotation to view details</p>
             </div>
           )}
         </div>
@@ -886,9 +1134,20 @@ export default function AnnotationEditor() {
           {/* Image Container - Fixed height */}
           <div
             ref={containerRef}
-            className="flex-1 overflow-auto bg-slate-900 flex items-center justify-center p-2 min-h-0"
+            onMouseDown={handlePanStart}
+            className={
+              "flex-1 overflow-auto bg-slate-900 flex items-center justify-center p-2 min-h-0 pan-handle" +
+              (ocrMultiSelect ? " ocr-multi-select-mode" : "") +
+              (isPanning ? " cursor-grabbing" : " cursor-grab")
+            }
           >
-            <div className="relative">
+            <div
+              className="relative pan-handle"
+              style={{
+                transform: `translate(${pan.x}px, ${pan.y}px)`,
+                transition: isPanning ? "none" : "transform 0.1s ease-out",
+              }}
+            >
               <img
                 ref={imgRef}
                 src={imgURL}
@@ -903,6 +1162,40 @@ export default function AnnotationEditor() {
                 draggable={false}
               />
             </div>
+          </div>
+        </div>
+
+        {/* Right Panel - OCR Recognition */}
+        <div className="w-96 bg-slate-800 border-l border-slate-700 flex flex-col h-full flex-shrink-0 overflow-hidden">
+          <div className="p-4 border-b border-slate-700 flex-shrink-0">
+            <OcrRecognizer
+              annotations={annotations}
+              selectedAnnotationId={selId}
+              selectedIds={ocrSelectedIds}
+              multiSelect={ocrMultiSelect}
+              onToggleMultiSelect={() => {
+                // Clear all selections when toggling multi-select mode
+                setOcrMultiSelect((v) => !v);
+                setOcrSelectedIds([]);
+                setSelId(null);
+                // Cancel current selection in Annotorious to prevent popup
+                if (annoRef.current) {
+                  try {
+                    annoRef.current.cancelSelected();
+                  } catch (e) {
+                    console.warn("Failed to cancel selection:", e);
+                  }
+                }
+              }}
+              onSelectAll={() =>
+                setOcrSelectedIds(annotations.map((a) => a.id))
+              }
+              onSelectNone={() => setOcrSelectedIds([])}
+              imageFile={pair.image}
+              naturalSize={natural}
+              ocrEndpoint={ocrEndpoint}
+              onOcrResult={handleOcrResult}
+            />
           </div>
         </div>
       </div>

@@ -89,6 +89,7 @@ export default function FileManager({ apiMode = false }) {
   const nav = useNavigate();
   const [pairs, setPairs] = useState([]);
   const [apiUrl, setApiUrl] = useState(localStorage.getItem("hn_apiUrl") || "");
+  const [ocrUrl, setOcrUrl] = useState(localStorage.getItem("hn_ocrUrl") || "");
   const [previewImage, setPreviewImage] = useState(null);
   const [imageUrls, setImageUrls] = useState(new Map());
   const [isDragging, setIsDragging] = useState(false);
@@ -412,6 +413,7 @@ export default function FileManager({ apiMode = false }) {
 
   const go = () => {
     if (apiMode) localStorage.setItem("hn_apiUrl", apiUrl || "");
+    localStorage.setItem("hn_ocrUrl", ocrUrl || "");
     nav("/workspace/manual/editor", { state: { apiMode, apiUrl } });
   };
 
@@ -568,108 +570,81 @@ export default function FileManager({ apiMode = false }) {
         </div>
       )}
 
+      {/* OCR Configuration - Available for both modes */}
+      <div className="feature-card mb-6">
+        <h3 className="text-lg font-semibold mb-4 text-slate-200 flex items-center gap-2">
+          <svg
+            className="w-5 h-5 text-blue-400"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+            />
+          </svg>
+          OCR Configuration
+        </h3>
+        <label className="block text-sm font-medium text-slate-300 mb-2">
+          OCR Recognition Endpoint (optional)
+        </label>
+        <input
+          className="w-full bg-slate-900/80 border border-slate-700 rounded-xl px-4 py-3 text-slate-200 placeholder-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all"
+          value={ocrUrl}
+          onChange={(e) => setOcrUrl(e.target.value)}
+          placeholder="https://your-ocr-endpoint.example.com/api/ocr"
+        />
+        <p className="text-slate-400 text-sm mt-2">
+          OCR endpoint for Han-Nom character recognition after annotation.
+        </p>
+      </div>
+
+      {/* Upload Section - Step by Step Flow */}
       <div className="feature-card mb-8">
+        <h3 className="text-lg font-semibold mb-6 text-slate-200">
+          {apiMode ? "Upload Images" : "Prepare Your Annotation Files"}
+        </h3>
+
         <div
-          className={`text-center py-8 border-2 border-dashed rounded-2xl transition-all ${
-            isDragging
-              ? "border-blue-400 bg-blue-500/10"
-              : "border-slate-600/50"
+          className={`grid gap-6 ${
+            apiMode ? "grid-cols-1" : "grid-cols-1 md:grid-cols-2"
           }`}
-          onDragOver={handleDragOver}
-          onDragLeave={handleDragLeave}
-          onDrop={handleDrop}
         >
+          {/* Step 1: Upload Images */}
           <div
-            className={`w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4 transition-colors ${
-              isDragging ? "bg-blue-500/20" : "bg-slate-700/50"
+            className={`border-2 border-dashed rounded-2xl p-8 text-center transition-all ${
+              isDragging
+                ? "border-blue-400 bg-blue-500/10"
+                : "border-slate-600/50 hover:border-slate-500/70"
             }`}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
           >
-            <svg
-              className={`w-8 h-8 transition-colors ${
-                isDragging ? "text-blue-400" : "text-slate-400"
-              }`}
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
-              />
-            </svg>
-          </div>
-          <h3 className="text-xl font-semibold mb-2 text-slate-200">
-            Upload Your Files
-          </h3>
-          <p
-            className={`mb-6 transition-colors ${
-              isDragging ? "text-blue-300" : "text-slate-400"
-            }`}
-          >
-            {isDragging
-              ? "Drop files here to upload"
-              : "Drag and drop files here, or use the buttons below"}
-          </p>
-          <p className="text-sm text-slate-500 mb-6">
-            {apiMode
-              ? "Supports: JPG, PNG, WEBP images for API detection"
-              : "Supports: JPG, PNG, WEBP images and TXT label files"}
-          </p>
-
-          <div className="flex gap-4 justify-center flex-wrap">
-            <label className="btn-sec cursor-pointer">
-              <svg
-                className="w-4 h-4 mr-2"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2H5a2 2 0 00-2-2z"
-                />
-              </svg>
-              Upload Folder
-              <input
-                type="file"
-                className="hidden"
-                multiple
-                webkitdirectory="true"
-                directory="true"
-                onChange={(e) => loadFiles(e.target.files)}
-              />
-            </label>
-
-            <label className="btn cursor-pointer">
-              <svg
-                className="w-4 h-4 mr-2"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
-                />
-              </svg>
-              Upload Images
-              <input
-                type="file"
-                className="hidden"
-                multiple
-                accept=".jpg,.jpeg,.png,.webp"
-                onChange={(e) => loadFiles(e.target.files)}
-              />
-            </label>
-
-            {!apiMode && (
-              <label className="btn-sec cursor-pointer">
+            <div className="flex flex-col items-center">
+              <div className="w-14 h-14 rounded-2xl flex items-center justify-center mb-3 bg-blue-500/20">
+                <svg
+                  className="w-7 h-7 text-blue-400"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
+                  />
+                </svg>
+              </div>
+              <h4 className="text-base font-semibold text-slate-200 mb-1">
+                Step 1: Upload Images
+              </h4>
+              <p className="text-xs text-slate-400 mb-4">JPG, PNG, WEBP</p>
+              <label className="btn cursor-pointer text-sm">
                 <svg
                   className="w-4 h-4 mr-2"
                   fill="none"
@@ -680,21 +655,76 @@ export default function FileManager({ apiMode = false }) {
                     strokeLinecap="round"
                     strokeLinejoin="round"
                     strokeWidth={2}
-                    d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                    d="M12 4v16m8-8H4"
                   />
                 </svg>
-                Upload Labels
+                Select Images
                 <input
                   type="file"
                   className="hidden"
                   multiple
-                  accept=".txt"
+                  accept=".jpg,.jpeg,.png,.webp"
                   onChange={(e) => loadFiles(e.target.files)}
                 />
               </label>
-            )}
+            </div>
           </div>
+
+          {/* Step 2: Upload Labels (Manual Mode Only) */}
+          {!apiMode && (
+            <div className="border-2 border-dashed rounded-2xl p-8 text-center hover:border-slate-500/70 transition-all border-slate-600/50">
+              <div className="flex flex-col items-center">
+                <div className="w-14 h-14 rounded-2xl flex items-center justify-center mb-3 bg-amber-500/20">
+                  <svg
+                    className="w-7 h-7 text-amber-400"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                    />
+                  </svg>
+                </div>
+                <h4 className="text-base font-semibold text-slate-200 mb-1">
+                  Step 2: Upload Labels
+                </h4>
+                <p className="text-xs text-slate-400 mb-4">TXT (optional)</p>
+                <label className="btn-sec cursor-pointer text-sm">
+                  <svg
+                    className="w-4 h-4 mr-2"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M12 4v16m8-8H4"
+                    />
+                  </svg>
+                  Select Labels
+                  <input
+                    type="file"
+                    className="hidden"
+                    multiple
+                    accept=".txt"
+                    onChange={(e) => loadFiles(e.target.files)}
+                  />
+                </label>
+              </div>
+            </div>
+          )}
         </div>
+
+        <p className="text-xs text-slate-500 mt-4 text-center">
+          💡 Tip: Match file names for automatic pairing (e.g., image.jpg with
+          image.txt)
+        </p>
       </div>
 
       {pairs.length > 0 && (

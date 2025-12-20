@@ -98,7 +98,7 @@ export default function ModePicker() {
             </h3>
           </div>
           <p className="text-slate-400 text-center mb-6 leading-relaxed">
-            Upload images and generate annotations automatically using AI API
+            Upload images and generate annotations automatically using model API
             integration.
           </p>
           <button className="btn w-full bg-green-500 hover:bg-green-600 group-hover:scale-105 transition-transform">

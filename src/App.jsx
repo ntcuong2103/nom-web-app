@@ -54,7 +54,7 @@ export default function App() {
         <Route path="/workspace/manual/editor" element={<AnnotationEditor />} />
         <Route path="/workspace/api" element={<FileManager apiMode />} />
       </Routes>
-      <footer className="text-center text-slate-400 py-6">
+      <footer className="text-center text-slate-400 py-0">
         © 2025 Han-Nom Tools
       </footer>
     </>
