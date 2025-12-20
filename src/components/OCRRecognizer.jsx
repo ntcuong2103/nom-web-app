@@ -362,7 +362,6 @@ export default function OcrRecognizer({
           </div>
         </div>
       </div>
-
     </div>
   );
 }
