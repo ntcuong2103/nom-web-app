@@ -4,14 +4,15 @@ import Home from "./components/Home.jsx";
 import ModePicker from "./components/ModePicker.jsx";
 import FileManager from "./components/FileManager.jsx";
 import AnnotationEditor from "./components/AnnotationEditor.jsx";
+import LogoIcon from "./Logo/language-translate-svgrepo-com.svg";
 
 const Navbar = () => (
   <div className="border-b border-slate-800/50 bg-bg/95 backdrop-blur-sm sticky top-0 z-50">
     <div className="max-w-6xl mx-auto px-6">
       <div className="flex items-center justify-between py-4">
         <div className="flex items-center gap-3 font-bold text-xl">
-          <div className="w-8 h-8 rounded-lg bg-blue-500 flex items-center justify-center">
-            <span className="text-white text-lg">🌏</span>
+          <div className="w-8 h-8 rounded-lg bg-blue-500 flex items-center justify-center p-1">
+            <img src={LogoIcon} alt="Logo" className="w-full h-full" />
           </div>
           <span className="bg-gradient-to-r from-blue-400 to-blue-600 bg-clip-text text-transparent">
             Hán-Nôm Annotator
