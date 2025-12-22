@@ -16,6 +16,7 @@ Dự án sử dụng **4 hệ tọa độ khác nhau** cho bbox tùy theo contex
 ### 1. YOLO Normalized (Normalized, Center-Based)
 
 **Định dạng:**
+
 ```javascript
 {
   x: 0.5,      // center-x (0–1, tương đối width)
@@ -26,15 +27,18 @@ Dự án sử dụng **4 hệ tọa độ khác nhau** cho bbox tùy theo contex
 ```
 
 **Đặc điểm:**
+
 - Được sử dụng bởi YOLO detection models
 - Center-based (cx, cy) → dễ augmentation & data symmetry
 - Normalized → scale-invariant, dễ training trên ảnh khác kích thước
 - Lưu trữ trong file `.txt` export (VD: `DVSKTT_thu_III_1a.txt`)
 
 **Ví dụ từ file:**
+
 ```
 từ,từ 0 0.815517 0.694444 0.058621 0.037778 ⊞木□人人
 ```
+
 → class=0, cx=0.815517, cy=0.694444, w=0.058621, h=0.037778
 
 ---
@@ -42,6 +46,7 @@ từ,từ 0 0.815517 0.694444 0.058621 0.037778 ⊞木□人人
 ### 2. Natural Pixels (Pixels, Center-Based)
 
 **Định dạng:**
+
 ```javascript
 {
   x: 848,       // center-x in pixels
@@ -52,12 +57,14 @@ từ,từ 0 0.815517 0.694444 0.058621 0.037778 ⊞木□人人
 ```
 
 **Đặc điểm:**
+
 - Pixels thực tế của ảnh gốc
 - Center-based (dễ crop mở rộng đối xứng)
 - Kết quả sau chuyển từ YOLO normalized
 - Dùng trong YOLO→W3C conversion
 
 **Công thức chuyển từ Normalized:**
+
 ```javascript
 naturalX = normX × imageWidth
 naturalY = normY × imageHeight
@@ -70,31 +77,36 @@ naturalH = normH × imageHeight
 ### 3. W3C Media Fragments (Natural Pixels, Top-Left)
 
 **Định dạng:**
+
 ```
 xywh=pixel:x,y,w,h
 ```
 
 **Ví dụ:**
+
 ```
 xywh=pixel:232,102,20,16
 ```
 
 **Đặc điểm:**
+
 - Chuẩn W3C Media Fragments (được Annotorious dùng)
 - Top-left based (x, y là góc trái trên)
 - Natural pixels (không normalized)
 - Lưu trữ trong Annotorious annotation object
 
 **Chuyển từ Center → Top-Left:**
+
 ```javascript
-topLeftX = centerX - w / 2
-topLeftY = centerY - h / 2
+topLeftX = centerX - w / 2;
+topLeftY = centerY - h / 2;
 ```
 
 **Chuyển từ Top-Left → Center:**
+
 ```javascript
-centerX = topLeftX + w / 2
-centerY = topLeftY + h / 2
+centerX = topLeftX + w / 2;
+centerY = topLeftY + h / 2;
 ```
 
 ---
@@ -102,6 +114,7 @@ centerY = topLeftY + h / 2
 ### 4. API Payload (Natural Pixels, Center-Based)
 
 **Định dạng (FormData):**
+
 ```
 x: 848          // center-x in pixels
 y: 625          // center-y in pixels
@@ -110,6 +123,7 @@ height: 34      // height in pixels
 ```
 
 **Đặc điểm:**
+
 - Backend OCR API yêu cầu center-based
 - Natural pixels (không normalized)
 - Dùng để crop mở rộng: `x1 = cx - w/2`, `y1 = cy - h/2`
@@ -122,6 +136,7 @@ height: 34      // height in pixels
 ### File: `src/utils/yolo.js`
 
 #### 1. `normToAbs(bbox, imgWidth, imgHeight)`
+
 **YOLO Normalized → Natural Pixels (Center)**
 
 ```javascript
@@ -130,17 +145,19 @@ function normToAbs(bbox, imgWidth, imgHeight) {
     x: bbox.x * imgWidth,
     y: bbox.y * imgHeight,
     w: bbox.w * imgWidth,
-    h: bbox.h * imgHeight
+    h: bbox.h * imgHeight,
   };
 }
 ```
 
 **Dùng khi:**
+
 - Import YOLO detection output
 - Chuyển từ file `.txt` normalized sang pixels
 - Chuẩn bị cho W3C conversion
 
 **Ví dụ:**
+
 ```javascript
 const norm = { x: 0.815517, y: 0.694444, w: 0.058621, h: 0.037778 };
 const natural = normToAbs(norm, 1040, 900);
@@ -150,6 +167,7 @@ const natural = normToAbs(norm, 1040, 900);
 ---
 
 #### 2. `absToNorm(bbox, imgWidth, imgHeight)`
+
 **Natural Pixels → YOLO Normalized (Center)**
 
 ```javascript
@@ -158,17 +176,19 @@ function absToNorm(bbox, imgWidth, imgHeight) {
     x: bbox.x / imgWidth,
     y: bbox.y / imgHeight,
     w: bbox.w / imgWidth,
-    h: bbox.h / imgHeight
+    h: bbox.h / imgHeight,
   };
 }
 ```
 
 **Dùng khi:**
+
 - Export annotation để training YOLO
 - Chuyển từ pixels sang normalized format
 - Lưu vào file `.txt`
 
 **Ví dụ:**
+
 ```javascript
 const natural = { x: 848, y: 625, w: 61, h: 34 };
 const norm = absToNorm(natural, 1040, 900);
@@ -178,27 +198,32 @@ const norm = absToNorm(natural, 1040, 900);
 ---
 
 #### 3. `yoloToW3C(yoloBbox, imgNaturalSize)`
+
 **YOLO Normalized → W3C Media Fragments (Top-Left)**
 
 ```javascript
 function yoloToW3C(yoloBbox, imgNaturalSize) {
   // Step 1: Normalize → Natural pixels (center)
   const natural = normToAbs(yoloBbox, imgNaturalSize.w, imgNaturalSize.h);
-  
+
   // Step 2: Center → Top-left
   const topLeftX = Math.round(natural.x - natural.w / 2);
   const topLeftY = Math.round(natural.y - natural.h / 2);
-  
-  return `xywh=pixel:${topLeftX},${topLeftY},${Math.round(natural.w)},${Math.round(natural.h)}`;
+
+  return `xywh=pixel:${topLeftX},${topLeftY},${Math.round(
+    natural.w
+  )},${Math.round(natural.h)}`;
 }
 ```
 
 **Dùng khi:**
+
 - Import YOLO detection để tạo annotation
 - Tạo W3C Media Fragments từ YOLO output
 - Chuẩn bị data cho Annotorious
 
 **Ví dụ:**
+
 ```javascript
 const yolo = { x: 0.815517, y: 0.694444, w: 0.058621, h: 0.037778 };
 const w3c = yoloToW3C(yolo, { w: 1040, h: 900 });
@@ -208,6 +233,7 @@ const w3c = yoloToW3C(yolo, { w: 1040, h: 900 });
 ---
 
 #### 4. `w3cToYolo(w3cString, imgNaturalSize)`
+
 **W3C Media Fragments → YOLO Normalized (Center)**
 
 ```javascript
@@ -215,28 +241,30 @@ function w3cToYolo(w3cString, imgNaturalSize) {
   // Step 1: Parse xywh=pixel:x,y,w,h
   const match = w3cString.match(/xywh=pixel:(\d+),(\d+),(\d+),(\d+)/);
   if (!match) return null;
-  
+
   const [, x, y, w, h] = match.map(Number);
-  
+
   // Step 2: Top-left → Center
   const natural = {
     x: x + w / 2,
     y: y + h / 2,
     w: w,
-    h: h
+    h: h,
   };
-  
+
   // Step 3: Natural pixels → Normalized
   return absToNorm(natural, imgNaturalSize.w, imgNaturalSize.h);
 }
 ```
 
 **Dùng khi:**
+
 - Extract annotation từ Annotorious
 - Export annotation cho training YOLO
 - Chuyển W3C sang YOLO format
 
 **Ví dụ:**
+
 ```javascript
 const w3c = "xywh=pixel:817,608,61,34";
 const yolo = w3cToYolo(w3c, { w: 1040, h: 900 });
@@ -248,6 +276,7 @@ const yolo = w3cToYolo(w3c, { w: 1040, h: 900 });
 ### File: `src/components/OCRRecognizer.jsx`
 
 #### 5. `extractBbox(annotation)`
+
 **Extract W3C từ Annotorious Object → Natural Pixels (Top-Left)**
 
 ```javascript
@@ -260,23 +289,31 @@ const extractBbox = (annotation) => {
 
   const [, x, y, w, h] = match.map(Number);
 
-  console.log("[extractBbox] Natural (top-left) bbox from annotation:", { x, y, w, h });
+  console.log("[extractBbox] Natural (top-left) bbox from annotation:", {
+    x,
+    y,
+    w,
+    h,
+  });
   return { x, y, w, h };
 };
 ```
 
 **Dùng khi:**
+
 - Lấy bbox từ annotation đã lưu
 - Chuẩn bị gửi OCR API
 - Zoom-safe (lấy trực tiếp từ annotation, không phụ thuộc rendered size)
 
 **Tính năng quan trọng:**
+
 - ✅ **Zoom-invariant:** Giá trị không thay đổi khi zoom in/out
 - ✅ **Natural pixels:** Tọa độ ảnh gốc, không ảnh hưởng canvas size
 
 **Ví dụ:**
+
 ```javascript
-const anno = { target: { selector: { value: 'xywh=pixel:817,608,61,34' } } };
+const anno = { target: { selector: { value: "xywh=pixel:817,608,61,34" } } };
 const bbox = extractBbox(anno);
 // → { x: 817, y: 608, w: 61, h: 34 }
 ```
@@ -286,6 +323,7 @@ const bbox = extractBbox(anno);
 ### File: `src/utils/ocr.js`
 
 #### 6. `recognizeCharacter(endpointUrl, imageFile, bbox, naturalWidth, naturalHeight)`
+
 **W3C Top-Left → API Center-Based Payload**
 
 ```javascript
@@ -297,7 +335,7 @@ export async function recognizeCharacter(
   naturalHeight
 ) {
   // Input: bbox = { x, y, w, h } (top-left, natural pixels)
-  
+
   // Convert top-left → center
   const cx = bbox.x + bbox.w / 2;
   const cy = bbox.y + bbox.h / 2;
@@ -313,7 +351,8 @@ export async function recognizeCharacter(
   formData.append("height", String(height));
 
   const response = await fetch(endpointUrl, { method: "POST", body: formData });
-  if (!response.ok) throw new Error(`OCR API error: ${response.status} ${response.statusText}`);
+  if (!response.ok)
+    throw new Error(`OCR API error: ${response.status} ${response.statusText}`);
 
   const result = await response.json();
   return {
@@ -325,11 +364,13 @@ export async function recognizeCharacter(
 ```
 
 **Dùng khi:**
+
 - Gửi OCR request từ FE sang backend
 - Convert từ Annotorious format (top-left) → API format (center)
 - Ranh giới FE ↔ BE
 
 **Ví dụ:**
+
 ```javascript
 const bbox = { x: 817, y: 608, w: 61, h: 34 }; // top-left
 // → center payload: x=847.5, y=643, width=61, height=34
@@ -340,6 +381,7 @@ const bbox = { x: 817, y: 608, w: 61, h: 34 }; // top-left
 ### File: `src/components/AnnotationEditor.jsx`
 
 #### 7. `xywh(x, y, w, h)`
+
 **Create W3C Media Fragments String**
 
 ```javascript
@@ -348,12 +390,14 @@ const xywh = (x, y, w, h) =>
 ```
 
 **Dùng khi:**
+
 - Tạo W3C selector khi lưu annotation
 - Format chuẩn Annotorious
 - Store natural pixels (top-left)
 - Giữ subpixel precision (6 chữ số thập phân)
 
 **Ví dụ:**
+
 ```javascript
 const w3cString = xywh(817.5, 608.25, 61, 34);
 // → "xywh=pixel:817.500000,608.250000,61.000000,34.000000"
@@ -376,6 +420,7 @@ Annotorious Annotation Object
 ```
 
 **Code:**
+
 ```javascript
 const yoloBbox = { x: 0.815517, y: 0.694444, w: 0.058621, h: 0.037778 };
 const w3cString = yoloToW3C(yoloBbox, { w: 1040, h: 900 });
@@ -401,9 +446,10 @@ OCR Result (text, ids)
 ```
 
 **Code:**
+
 ```javascript
 const anno = getSelectedAnnotation();
-const bbox = extractBbox(anno);  // top-left
+const bbox = extractBbox(anno); // top-left
 const result = await recognizeCharacter(apiUrl, imageFile, bbox);
 ```
 
@@ -422,6 +468,7 @@ Export File "0 0.815 0.694 0.058 0.037"
 ```
 
 **Code:**
+
 ```javascript
 const anno = annotations[i];
 const bbox = extractBbox(anno);
@@ -434,38 +481,43 @@ const yolo = w3cToYolo(w3cStr, imgSize);
 
 ## Bảng So Sánh
 
-| Hệ Tọa Độ | Định Dạng | Loại | Ứng Dụng |
-|-----------|-----------|------|---------|
-| **YOLO Norm** | `{x: 0.5, y: 0.3, w: 0.1, h: 0.08}` | Center, Normalized | Models, Training |
-| **Natural Center** | `{x: 848, y: 625, w: 61, h: 34}` | Center, Pixels | Internal Convert |
-| **W3C Top-Left** | `xywh=pixel:817,608,61,34` | Top-Left, Pixels | Annotorious Storage |
-| **API Center** | `{x: 847.5, y: 643, width: 61, height: 34}` | Center, Pixels | OCR API POST |
+| Hệ Tọa Độ          | Định Dạng                                   | Loại               | Ứng Dụng            |
+| ------------------ | ------------------------------------------- | ------------------ | ------------------- |
+| **YOLO Norm**      | `{x: 0.5, y: 0.3, w: 0.1, h: 0.08}`         | Center, Normalized | Models, Training    |
+| **Natural Center** | `{x: 848, y: 625, w: 61, h: 34}`            | Center, Pixels     | Internal Convert    |
+| **W3C Top-Left**   | `xywh=pixel:817,608,61,34`                  | Top-Left, Pixels   | Annotorious Storage |
+| **API Center**     | `{x: 847.5, y: 643, width: 61, height: 34}` | Center, Pixels     | OCR API POST        |
 
 ---
 
 ## Tính Năng Quan Trọng
 
 ### ✅ Zoom-Invariant
+
 - W3C annotations lưu **natural pixels** từ ảnh gốc
 - `extractBbox()` lấy trực tiếp, không phụ thuộc zoom
 - Tọa độ gửi API **luôn chính xác** dù zoom in/out
 
 ### ✅ Chuẩn W3C
+
 - Annotorious dùng W3C Media Fragments tiêu chuẩn
 - Top-left format tương thích với DOM/CSS
 - Dễ render selection/preview
 
 ### ✅ Center-Based API
+
 - Backend dùng center cho crop mở rộng đối xứng
 - Công thức: `x1 = cx - w/2, y1 = cy - h/2`
 - Dễ apply `expand_ratio` đều trên 4 phía
 
 ### ✅ Scale-Invariant YOLO
+
 - Normalized format (0–1) independent của image size
 - Training trên ảnh 640×480 hoặc 1040×900 cùng giá trị
 - Dễ augmentation
 
 ### ✅ Subpixel Precision
+
 - `xywh()` giữ 6 chữ số thập phân khi lưu
 - Tránh mất precision từ rounding
 - Kết quả OCR chính xác với Swagger manual test
@@ -479,7 +531,7 @@ const yolo = w3cToYolo(w3cStr, imgSize);
 ```javascript
 // Step 1: Read YOLO detection from file
 const yoloLine = "từ 0 0.815517 0.694444 0.058621 0.037778";
-const [char, classId, cx, cy, w, h] = yoloLine.split(' ').map(parseFloat);
+const [char, classId, cx, cy, w, h] = yoloLine.split(" ").map(parseFloat);
 
 // Step 2: Convert to W3C
 const yolo = { x: cx, y: cy, w: w, h: h };
@@ -488,16 +540,16 @@ const w3cString = yoloToW3C(yolo, { w: 1040, h: 900 });
 
 // Step 3: Create Annotorious annotation
 const annotation = {
-  type: 'Annotation',
+  type: "Annotation",
   target: {
-    selector: { value: w3cString }
-  }
+    selector: { value: w3cString },
+  },
 };
 annotorious.addAnnotation(annotation);
 
 // Step 4: User selects annotation, runs OCR
 const selectedAnno = annotorious.getSelected()[0];
-const bbox = extractBbox(selectedAnno);  
+const bbox = extractBbox(selectedAnno);
 // → {x: 817.5, y: 608.25, w: 61, h: 34}
 
 const result = await recognizeCharacter(apiUrl, imageFile, bbox);
@@ -505,7 +557,7 @@ const result = await recognizeCharacter(apiUrl, imageFile, bbox);
 
 // Step 5: Export for training
 const exported = w3cToYolo(
-  `xywh=pixel:${bbox.x},${bbox.y},${bbox.w},${bbox.h}`, 
+  `xywh=pixel:${bbox.x},${bbox.y},${bbox.w},${bbox.h}`,
   { w: 1040, h: 900 }
 );
 // → { x: 0.815..., y: 0.694..., w: 0.058..., h: 0.037... }
@@ -553,23 +605,30 @@ Backend crop (expand_ratio = 1.2):
 ## Lưu Ý Khi Debug
 
 1. **Kiểm tra format W3C:**
+
    ```javascript
    console.log(anno.target.selector.value);
    // Expected: "xywh=pixel:817.500000,608.000000,61.000000,34.000000"
    ```
 
 2. **Verify API payload:**
+
    ```javascript
-   console.log('[OCR] Sending:', { x, y, width, height });
+   console.log("[OCR] Sending:", { x, y, width, height });
    // Compare with Swagger manual test
    ```
 
 3. **Kiểm tra natural size:**
+
    ```javascript
-   console.log('Image size:', { width: img.naturalWidth, height: img.naturalHeight });
+   console.log("Image size:", {
+     width: img.naturalWidth,
+     height: img.naturalHeight,
+   });
    ```
 
 4. **Test zoom stability:**
+
    - Zoom in/out, chọn cùng bbox
    - Kiểm tra console: `x, y, width, height` phải giống nhau
    - Nếu khác → check `extractBbox()` không bị ảnh hưởng rendered size
