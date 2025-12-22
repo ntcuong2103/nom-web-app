@@ -115,7 +115,7 @@ export default function OcrRecognizer({
     }
   }, [selectedAnnotationId, ocrResults]);
 
-  // Extract bounding box from W3C annotation
+  // Extract bounding box from W3C annotation (natural pixels, top-left xywh)
   const extractBbox = (annotation) => {
     const value = annotation?.target?.selector?.value || "";
     const match = value.match(
@@ -125,13 +125,10 @@ export default function OcrRecognizer({
 
     const [, x, y, w, h] = match.map(Number);
 
-    // Convert absolute coordinates to normalized
-    return {
-      x: x / naturalSize.w,
-      y: y / naturalSize.h,
-      w: w / naturalSize.w,
-      h: h / naturalSize.h,
-    };
+    // These are already natural image pixel coordinates (created by yoloToW3C)
+    const box = { x, y, w, h };
+    console.log("[extractBbox] Natural (top-left) bbox from annotation:", box);
+    return box;
   };
 
   // Multi-select list removed; actions operate on current selection
