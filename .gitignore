@@ -205,3 +205,13 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+__pycache__/
+*.py[cod]
+backend/.venv/
+backend/nom_v1.db
+frontend/.next/
+frontend/node_modules/
+storage/uploads/*
+storage/exports/*
+!storage/uploads/.gitkeep
+!storage/exports/.gitkeep
