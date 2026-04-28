@@ -30,22 +30,39 @@ export default function AnnotatePage({ params }: { params: Promise<{ imageId: st
   const { data: image } = useQuery({ queryKey: ["image", imageId], queryFn: () => api.image(imageId) });
   const { data: annotations = [] } = useQuery({ queryKey: ["annotations", imageId, filterParams], queryFn: () => api.annotations(imageId, filterParams) });
   const { data: events = [] } = useQuery({ queryKey: ["events", imageId], queryFn: () => api.imageEvents(imageId) });
-  const selected = annotations.find((annotation) => annotation.id === selectedId) ?? null;
+  const activeAnnotations = useMemo(() => annotations.filter((annotation) => annotation.status !== "deleted"), [annotations]);
+  const selected = activeAnnotations.find((annotation) => annotation.id === selectedId) ?? null;
+  const selectedEvents = selected ? events.filter((event) => event.annotation_id === selected.id) : [];
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ["annotations", imageId] });
     queryClient.invalidateQueries({ queryKey: ["events", imageId] });
   };
   const create = useMutation({ mutationFn: (draft: AnnotationDraft) => api.createAnnotation(imageId, draft), onSuccess: invalidate });
   const update = useMutation({ mutationFn: ({ id, changes }: { id: number; changes: Partial<AnnotationDraft> }) => api.updateAnnotation(id, changes), onSuccess: invalidate });
-  const remove = useMutation({ mutationFn: (id: number) => api.deleteAnnotation(id), onSuccess: invalidate });
+  const remove = useMutation({
+    mutationFn: (id: number) => api.deleteAnnotation(id),
+    onSuccess: () => {
+      setSelectedId(null);
+      invalidate();
+    }
+  });
 
   useEffect(() => {
     setLabel(selected?.label ?? "");
   }, [selected?.label]);
 
   useEffect(() => {
+    if (selectedId && !selected) setSelectedId(null);
+  }, [selected, selectedId]);
+
+  useEffect(() => {
     function onKey(event: KeyboardEvent) {
-      if ((event.key === "Delete" || event.key === "Backspace") && selectedId) remove.mutate(selectedId);
+      const target = event.target;
+      const isEditingText =
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        (target instanceof HTMLElement && target.isContentEditable);
+      if ((event.key === "Delete" || event.key === "Backspace") && selectedId && !isEditingText) remove.mutate(selectedId);
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s" && selectedId) {
         event.preventDefault();
         update.mutate({ id: selectedId, changes: { label } });
@@ -68,7 +85,6 @@ export default function AnnotatePage({ params }: { params: Promise<{ imageId: st
             <option value="">Any status</option>
             <option value="active">Active</option>
             <option value="review">Review</option>
-            <option value="deleted">Deleted</option>
           </select>
         </div>
       </div>
@@ -76,7 +92,7 @@ export default function AnnotatePage({ params }: { params: Promise<{ imageId: st
         {image ? (
           <AnnotationCanvas
             image={image}
-            annotations={annotations}
+            annotations={activeAnnotations}
             selectedId={selectedId}
             onSelect={setSelectedId}
             onCreate={(draft) => create.mutate(draft)}
@@ -115,23 +131,33 @@ export default function AnnotatePage({ params }: { params: Promise<{ imageId: st
           <section className="rounded-md border border-line bg-white p-4">
             <h2 className="mb-3 font-semibold">Annotations</h2>
             <div className="max-h-56 space-y-2 overflow-auto">
-              {annotations.map((annotation) => (
+              {activeAnnotations.map((annotation) => (
                 <button key={annotation.id} onClick={() => setSelectedId(annotation.id)} className={`w-full rounded border px-3 py-2 text-left text-sm ${selectedId === annotation.id ? "border-clay bg-field" : "border-line"}`}>
                   <span className="font-medium">{annotation.label}</span>
                   <span className="ml-2 text-moss">{annotation.status}</span>
                 </button>
               ))}
+              {activeAnnotations.length === 0 ? <p className="text-sm text-moss">No visible annotations.</p> : null}
             </div>
           </section>
           <section className="rounded-md border border-line bg-white p-4">
             <h2 className="mb-3 font-semibold">History</h2>
             <div className="max-h-72 space-y-2 overflow-auto text-sm">
-              {events.map((event) => (
-                <div key={event.id} className="rounded border border-line p-2">
-                  <div className="font-medium">{event.event_type}</div>
-                  <div className="text-xs text-moss">{new Date(event.created_at).toLocaleString()}</div>
-                </div>
-              ))}
+              {selected ? (
+                selectedEvents.length > 0 ? (
+                  selectedEvents.map((event) => (
+                    <div key={event.id} className="rounded border border-line p-2">
+                      <div className="font-medium">{event.event_type}</div>
+                      <div className="text-xs text-moss">by {event.actor_username}</div>
+                      <div className="text-xs text-moss">{new Date(event.created_at).toLocaleString()}</div>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-moss">No history for this annotation.</p>
+                )
+              ) : (
+                <p className="text-moss">Select an annotation to view its history.</p>
+              )}
             </div>
           </section>
         </aside>

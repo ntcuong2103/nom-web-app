@@ -95,6 +95,7 @@ class AnnotationEventRead(BaseModel):
     id: int
     annotation_id: int
     actor_user_id: int
+    actor_username: str
     event_type: str
     old_value_json: dict | None
     new_value_json: dict | None
@@ -104,4 +105,3 @@ class AnnotationEventRead(BaseModel):
 class ExportRead(BaseModel):
     filename: str
     download_url: str
-

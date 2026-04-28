@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from PIL import Image as PILImage
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.api.deps import current_user
 from app.core.security import create_access_token, hash_password, verify_password
@@ -259,6 +259,7 @@ def annotation_events(
 ) -> list[AnnotationEvent]:
     return (
         db.query(AnnotationEvent)
+        .options(joinedload(AnnotationEvent.actor))
         .filter(AnnotationEvent.annotation_id == annotation_id)
         .order_by(AnnotationEvent.created_at.desc())
         .all()
@@ -271,6 +272,7 @@ def image_events(
 ) -> list[AnnotationEvent]:
     return (
         db.query(AnnotationEvent)
+        .options(joinedload(AnnotationEvent.actor))
         .join(Annotation)
         .filter(Annotation.image_id == image_id)
         .order_by(AnnotationEvent.created_at.desc())
@@ -292,4 +294,3 @@ def export_yolo(
 @router.get("/exports/{filename}")
 def download_export(filename: str):
     return FileResponse(settings.export_dir / filename, filename=filename)
-

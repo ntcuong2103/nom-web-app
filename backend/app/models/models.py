@@ -75,4 +75,8 @@ class AnnotationEvent(Base):
     new_value_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     annotation: Mapped[Annotation] = relationship(back_populates="events")
+    actor: Mapped[User] = relationship()
 
+    @property
+    def actor_username(self) -> str:
+        return self.actor.email
