@@ -14,7 +14,7 @@ import OcrRecognizer from "./OCRRecognizer.jsx";
 
 const xywh = (x, y, w, h) =>
   `xywh=pixel:${Math.round(x)},${Math.round(y)},${Math.round(w)},${Math.round(
-    h
+    h,
   )}`;
 
 // Convert a File to base64 string (data portion only)
@@ -41,7 +41,7 @@ const fileToStorable = async (file) => ({
 // Upsert a label file into localStorage so File Manager can reload it later
 const persistLabelToLocalStorage = async (labelFile) => {
   const existingLabels = JSON.parse(
-    localStorage.getItem("hn_saved_labels") || "[]"
+    localStorage.getItem("hn_saved_labels") || "[]",
   );
 
   const filtered = existingLabels.filter((s) => s.name !== labelFile.name);
@@ -49,7 +49,7 @@ const persistLabelToLocalStorage = async (labelFile) => {
 
   localStorage.setItem(
     "hn_saved_labels",
-    JSON.stringify([...filtered, storable])
+    JSON.stringify([...filtered, storable]),
   );
 };
 
@@ -88,7 +88,7 @@ function usePairs() {
       console.warn(
         "Could not find single file in __HN_FILES__",
         possibleKeys,
-        map
+        map,
       );
     }
 
@@ -126,7 +126,7 @@ function usePairs() {
       if (!found) {
         console.warn(
           `Could not find file for pair: ${p.baseName}`,
-          possibleKeys
+          possibleKeys,
         );
       }
     });
@@ -139,6 +139,7 @@ export default function AnnotationEditor() {
   const [pairs, setPairs] = usePairs();
   const [idx, setIdx] = useState(0);
   const [zoom, setZoom] = useState(1);
+  const [editorMode, setEditorMode] = useState("edit");
   const [pan, setPan] = useState({ x: 0, y: 0 }); // Pan position for dragging zoomed image
   const [isPanning, setIsPanning] = useState(false); // Is currently panning
   const [panStart, setPanStart] = useState({ x: 0, y: 0 }); // Mouse position when pan started
@@ -156,7 +157,7 @@ export default function AnnotationEditor() {
     height: 0,
   });
   const [ocrEndpoint, setOcrEndpoint] = useState(
-    localStorage.getItem("hn_ocrUrl") || ""
+    localStorage.getItem("hn_ocrUrl") || "",
   );
   // moved below to ensure `loc` is initialized
   const [ocrResults, setOcrResults] = useState(new Map());
@@ -198,6 +199,7 @@ export default function AnnotationEditor() {
   const imgRef = useRef(null);
   const containerRef = useRef(null);
   const annoRef = useRef(null); // Annotorious instance
+  const gestureScaleRef = useRef(1);
   const [imgURL, setImgURL] = useState(null);
   const [natural, setNatural] = useState({ w: 0, h: 0 });
 
@@ -344,7 +346,7 @@ export default function AnnotationEditor() {
     for (const a of w3c || []) {
       const v = a?.target?.selector?.value || ""; // "xywh=pixel:x,y,w,h"
       const m = v.match(
-        /xywh=pixel:(\d+(?:\.\d+)?),(\d+(?:\.\d+)?),(\d+(?:\.\d+)?),(\d+(?:\.\d+)?)/
+        /xywh=pixel:(\d+(?:\.\d+)?),(\d+(?:\.\d+)?),(\d+(?:\.\d+)?),(\d+(?:\.\d+)?)/,
       );
       if (!m) {
         console.warn("w3cToYolo: Invalid selector value:", v);
@@ -388,7 +390,7 @@ export default function AnnotationEditor() {
               b.purpose === "tagging" &&
               b.value &&
               b.value !== "Class 0" &&
-              !b.value.startsWith("Class ")
+              !b.value.startsWith("Class "),
           );
           if (tagBody) {
             ocrText = tagBody.value;
@@ -423,7 +425,7 @@ export default function AnnotationEditor() {
       allowEmpty: true,
       formatter: (annotation) => {
         const hasOcrResult = annotation.body?.some(
-          (b) => b.purpose === "ocrResult"
+          (b) => b.purpose === "ocrResult",
         );
         const isOcrTarget = ocrSelectedIdsRef.current.includes(annotation.id);
         // Priority: ocr-completed (green) takes precedence over ocr-target (yellow)
@@ -437,6 +439,7 @@ export default function AnnotationEditor() {
       },
     });
     annoRef.current = anno;
+    anno.readOnly = editorMode === "view";
 
     // Handle selection changes
     anno.on("selectAnnotation", (annotation) => {
@@ -456,7 +459,7 @@ export default function AnnotationEditor() {
       if (annotation?.id && annotationsListRef.current) {
         setTimeout(() => {
           const annotationElement = annotationsListRef.current.querySelector(
-            `[data-annotation-id="${annotation.id}"]`
+            `[data-annotation-id="${annotation.id}"]`,
           );
           console.log("🔄 Auto-scroll attempt:", annotation.id);
           console.log("  Container ref:", annotationsListRef.current);
@@ -559,7 +562,7 @@ export default function AnnotationEditor() {
       console.log("Annotation updated:", annotation);
       // Update React state
       setAnnotations((prev) =>
-        prev.map((a) => (a.id === annotation.id ? annotation : a))
+        prev.map((a) => (a.id === annotation.id ? annotation : a)),
       );
     });
 
@@ -579,7 +582,7 @@ export default function AnnotationEditor() {
         setAnnotations(w3cAnnotations);
         console.log(
           "✅ Seeded annotations to both Annotorious and React state:",
-          w3cAnnotations.length
+          w3cAnnotations.length,
         );
         // Trigger annotations re-computation
         setAnnotationsReady(true);
@@ -606,7 +609,7 @@ export default function AnnotationEditor() {
               Number.isFinite(b.x) &&
               Number.isFinite(b.y) &&
               (Number.isFinite(b.w) || Number.isFinite(b.width)) &&
-              (Number.isFinite(b.h) || Number.isFinite(b.height))
+              (Number.isFinite(b.h) || Number.isFinite(b.height)),
           );
 
           if (!valid.length) {
@@ -669,18 +672,71 @@ export default function AnnotationEditor() {
     setPan({ x: 0, y: 0 }); // Reset pan when fitting
   };
 
-  // Pan handlers - only pan when clicking on container background, not on image
+  // Trackpad pinch gestures are exposed as ctrl+wheel in Chrome/Firefox.
+  // Safari also emits gesture events, which are handled as a fallback.
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const handleWheel = (e) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      const factor = Math.exp(-e.deltaY * 0.01);
+      setZoom((prev) => Math.min(5, Math.max(0.1, prev * factor)));
+    };
+
+    const handleGestureStart = (e) => {
+      e.preventDefault();
+      gestureScaleRef.current = e.scale || 1;
+    };
+
+    const handleGestureChange = (e) => {
+      e.preventDefault();
+      const scale = e.scale || 1;
+      const factor = scale / gestureScaleRef.current;
+      gestureScaleRef.current = scale;
+      setZoom((prev) => Math.min(5, Math.max(0.1, prev * factor)));
+    };
+
+    container.addEventListener("wheel", handleWheel, { passive: false });
+    container.addEventListener("gesturestart", handleGestureStart, {
+      passive: false,
+    });
+    container.addEventListener("gesturechange", handleGestureChange, {
+      passive: false,
+    });
+
+    return () => {
+      container.removeEventListener("wheel", handleWheel);
+      container.removeEventListener("gesturestart", handleGestureStart);
+      container.removeEventListener("gesturechange", handleGestureChange);
+    };
+  }, [imgURL]);
+
+  // Keep Annotorious drawing in sync with the selected editor mode.
+  useEffect(() => {
+    if (annoRef.current) {
+      annoRef.current.readOnly = editorMode === "view";
+    }
+    if (editorMode === "view") {
+      annoRef.current?.cancelSelected();
+      setSelId(null);
+    }
+  }, [editorMode]);
+
+  // View mode pans from anywhere on the page; edit mode leaves the image free
+  // for Annotorious to draw and edit bounding boxes.
   const handlePanStart = (e) => {
-    // Only start panning if clicking on the container background (not on image or its wrapper)
-    // Check if the click target is NOT the image or inside the image wrapper
+    if (editorMode !== "view" || e.button !== 0) return;
+
     const clickedOnImage =
       imgRef.current &&
       (e.target === imgRef.current || imgRef.current.contains(e.target));
 
     if (
-      !clickedOnImage &&
-      (e.target === containerRef.current ||
-        e.target.classList.contains("pan-handle"))
+      clickedOnImage ||
+      e.target === containerRef.current ||
+      e.target.closest(".pan-handle")
     ) {
       setIsPanning(true);
       setPanStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
@@ -767,7 +823,7 @@ export default function AnnotationEditor() {
       if (annotation) {
         // Update annotation body with OCR result (preserve existing bodies)
         const existingBodies = (annotation.body || []).filter(
-          (b) => b.purpose !== "ocrResult"
+          (b) => b.purpose !== "ocrResult",
         );
         const updatedAnnotation = {
           ...annotation,
@@ -792,7 +848,7 @@ export default function AnnotationEditor() {
 
         // Update React state
         setAnnotations((prev) =>
-          prev.map((a) => (a.id === annotationId ? updatedAnnotation : a))
+          prev.map((a) => (a.id === annotationId ? updatedAnnotation : a)),
         );
 
         // Force re-render to apply formatter class
@@ -836,8 +892,8 @@ export default function AnnotationEditor() {
     sessionStorage.setItem(
       "hn_pairs",
       JSON.stringify(updatedPairs, (k, v) =>
-        v instanceof File ? undefined : v
-      )
+        v instanceof File ? undefined : v,
+      ),
     );
 
     // Keep __HN_FILES__ in sync for the current session
@@ -972,13 +1028,13 @@ export default function AnnotationEditor() {
               {(() => {
                 const selectedAnn = annotations.find((ann) => ann.id === selId);
                 const match = selectedAnn?.target?.selector?.value?.match(
-                  /xywh=pixel:(\d+),(\d+),(\d+),(\d+)/
+                  /xywh=pixel:(\d+),(\d+),(\d+),(\d+)/,
                 );
                 const coords = match ? `(${match[1]}, ${match[2]})` : "";
                 const size = match ? `${match[3]} × ${match[4]}` : "";
                 // Find the correct index based on order in annotations array
                 const foundIndex = annotations.findIndex(
-                  (ann) => ann.id === selId
+                  (ann) => ann.id === selId,
                 );
                 const index = foundIndex + 1;
 
@@ -1074,60 +1130,98 @@ export default function AnnotationEditor() {
         <div className="flex-1 flex flex-col min-w-0">
           {/* Toolbar */}
           <div className="bg-slate-800 border-b border-slate-700 px-4 py-2 flex items-center justify-between flex-shrink-0">
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-slate-400">Zoom:</span>
-              <button
-                onClick={zoomOut}
-                className="p-1.5 text-slate-400 hover:text-white transition-colors"
-                title="Zoom Out"
-              >
-                <svg
-                  className="w-3.5 h-3.5"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
+            <div className="flex items-center gap-4">
+              <div className="flex items-center rounded-md bg-slate-900 p-0.5">
+                <button
+                  type="button"
+                  onClick={() => setEditorMode("edit")}
+                  className={`px-3 py-1 text-xs rounded transition-colors ${
+                    editorMode === "edit"
+                      ? "bg-blue-600 text-white"
+                      : "text-slate-400 hover:text-white"
+                  }`}
+                  title="Draw and edit bounding boxes"
+                  aria-pressed={editorMode === "edit"}
                 >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM13 10H7"
-                  />
-                </svg>
-              </button>
-              <span className="text-xs text-slate-300 min-w-12 text-center">
-                {Math.round(zoom * 100)}%
-              </span>
-              <button
-                onClick={zoomIn}
-                className="p-1.5 text-slate-400 hover:text-white transition-colors"
-                title="Zoom In"
-              >
-                <svg
-                  className="w-3.5 h-3.5"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
+                  Edit
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditorMode("view")}
+                  className={`px-3 py-1 text-xs rounded transition-colors ${
+                    editorMode === "view"
+                      ? "bg-blue-600 text-white"
+                      : "text-slate-400 hover:text-white"
+                  }`}
+                  title="Drag to move the page"
+                  aria-pressed={editorMode === "view"}
                 >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v3m0 0v3m0-3h3m-3 0H7"
-                  />
-                </svg>
-              </button>
-              <button
-                onClick={zoomFit}
-                className="px-2 py-1 text-xs bg-slate-700 text-slate-300 rounded hover:bg-slate-600 transition-colors"
-                title="Fit to Screen"
-              >
-                Fit
-              </button>
+                  View
+                </button>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-slate-400">Zoom:</span>
+                <button
+                  onClick={zoomOut}
+                  className="p-1.5 text-slate-400 hover:text-white transition-colors"
+                  title="Zoom Out"
+                >
+                  <svg
+                    className="w-3.5 h-3.5"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM13 10H7"
+                    />
+                  </svg>
+                </button>
+                <span className="text-xs text-slate-300 min-w-12 text-center">
+                  {Math.round(zoom * 100)}%
+                </span>
+                <button
+                  onClick={zoomIn}
+                  className="p-1.5 text-slate-400 hover:text-white transition-colors"
+                  title="Zoom In"
+                >
+                  <svg
+                    className="w-3.5 h-3.5"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v3m0 0v3m0-3h3m-3 0H7"
+                    />
+                  </svg>
+                </button>
+                <button
+                  onClick={zoomFit}
+                  className="px-2 py-1 text-xs bg-slate-700 text-slate-300 rounded hover:bg-slate-600 transition-colors"
+                  title="Fit to Screen"
+                >
+                  Fit
+                </button>
+              </div>
             </div>
 
-            <div className="text-xs text-slate-400">
-              {natural.w} × {natural.h} px
+            <div className="text-xs text-slate-400 flex items-center gap-3">
+              <span>
+                {editorMode === "edit"
+                  ? "Drag to draw a bounding box"
+                  : "Drag to move · Pinch to zoom"}
+              </span>
+              <span>
+                {natural.w} × {natural.h} px
+              </span>
             </div>
           </div>
 
@@ -1138,14 +1232,25 @@ export default function AnnotationEditor() {
             className={
               "flex-1 overflow-auto bg-slate-900 flex items-center justify-center p-2 min-h-0 pan-handle" +
               (ocrMultiSelect ? " ocr-multi-select-mode" : "") +
-              (isPanning ? " cursor-grabbing" : " cursor-grab")
+              (editorMode === "edit"
+                ? " cursor-crosshair"
+                : isPanning
+                  ? " cursor-grabbing"
+                  : " cursor-grab [&_*]:!cursor-grab [&_.a9s-annotationlayer]:pointer-events-none")
             }
+            style={{ touchAction: "none" }}
           >
             <div
               className="relative pan-handle"
               style={{
                 transform: `translate(${pan.x}px, ${pan.y}px)`,
                 transition: isPanning ? "none" : "transform 0.1s ease-out",
+                cursor:
+                  editorMode === "edit"
+                    ? "crosshair"
+                    : isPanning
+                      ? "grabbing"
+                      : "grab",
               }}
             >
               <img
