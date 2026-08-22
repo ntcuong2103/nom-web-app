@@ -41,7 +41,7 @@ def build_yolo_export(db: Session, dataset: Dataset) -> str:
         {
             annotation.label
             for image in images
-            for annotation in db.query(Annotation).filter(Annotation.image_id == image.id).all()
+            for annotation in db.query(Annotation).filter(Annotation.image_id == image.id, Annotation.status != "deleted").all()
         }
     )
     label_index = {label: index for index, label in enumerate(labels)}
