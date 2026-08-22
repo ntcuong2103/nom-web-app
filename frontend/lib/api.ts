@@ -108,9 +108,14 @@ export const api = {
   importYolo: (datasetId: string, file: File) => {
     const body = new FormData();
     body.append("file", file);
-    return request<{ images_imported: number; annotations_imported: number; errors: string[] }>(`/datasets/${datasetId}/import/yolo`, { method: "POST", body });
-  }
+    return request<ImportResult>(`/datasets/${datasetId}/import/yolo`, { method: "POST", body });
+  },
+
+  importFolder: (datasetId: string, imageRoot: string, labelRoot: string) =>
+    request<ImportResult>(`/datasets/${datasetId}/import/folder`, json("POST", { image_root: imageRoot, label_root: labelRoot }))
 };
+
+type ImportResult = { images_imported: number; annotations_imported: number; errors: string[] };
 
 export function imageFileUrl(imageId: number) {
   return `${API_BASE}/images/${imageId}/file`;

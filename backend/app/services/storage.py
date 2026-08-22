@@ -28,6 +28,16 @@ def save_upload(upload: UploadFile) -> tuple[str, int, int]:
     return storage_key, width, height
 
 
+def save_upload_from_path(source: Path) -> tuple[str, int, int]:
+    ensure_storage()
+    storage_key = f"{uuid.uuid4().hex}{source.suffix.lower()}"
+    destination = settings.upload_dir / storage_key
+    shutil.copyfile(source, destination)
+    with PILImage.open(destination) as image:
+        width, height = image.size
+    return storage_key, width, height
+
+
 def image_path(image: Image) -> Path:
     return settings.upload_dir / image.storage_key
 

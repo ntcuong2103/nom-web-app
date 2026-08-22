@@ -1,5 +1,5 @@
 import io
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from zipfile import BadZipFile, ZipFile
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
@@ -20,6 +20,7 @@ from app.schemas.schemas import (
     DatasetRead,
     DatasetUpdate,
     ExportRead,
+    FolderImportRequest,
     ImageRead,
     ImportRead,
     LoginRequest,
@@ -28,7 +29,10 @@ from app.schemas.schemas import (
     UserRead,
 )
 from app.services.audit import add_annotation_event, annotation_snapshot, classify_update
-from app.services.storage import build_yolo_export, image_path, save_upload, settings
+from app.services.storage import build_yolo_export, image_path, save_upload, save_upload_from_path, settings
+
+IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp"}
+UNLABELED_CHARACTER = "?"
 
 router = APIRouter()
 
@@ -358,6 +362,103 @@ def import_yolo(dataset_id: int, file: UploadFile = File(...), user: User = Depe
                     errors.append(f"{path.name}:{line_number}: invalid YOLO row")
         except (OSError, ValueError) as exc:
             errors.append(f"{path.name}: {exc}")
+    db.commit()
+    return ImportRead(images_imported=imported_images, annotations_imported=imported_annotations, errors=errors)
+
+
+def _find_matching_image(image_root: Path, relative_stem: PurePosixPath) -> Path | None:
+    for suffix in IMAGE_SUFFIXES:
+        candidate = image_root / relative_stem.with_suffix(suffix)
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+@router.post("/datasets/{dataset_id}/import/folder", response_model=ImportRead)
+def import_folder(
+    dataset_id: int,
+    payload: FolderImportRequest,
+    user: User = Depends(require_roles("admin", "annotator")),
+    db: Session = Depends(get_db),
+) -> ImportRead:
+    dataset = db.get(Dataset, dataset_id)
+    if not dataset:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    ensure_dataset_access(user, dataset)
+
+    image_root = Path(payload.image_root).expanduser().resolve()
+    label_root = Path(payload.label_root).expanduser().resolve()
+    if not image_root.is_dir():
+        raise HTTPException(status_code=422, detail=f"Image root is not a directory: {image_root}")
+    if not label_root.is_dir():
+        raise HTTPException(status_code=422, detail=f"Label root is not a directory: {label_root}")
+
+    imported_images = 0
+    imported_annotations = 0
+    errors: list[str] = []
+    for label_file in sorted(label_root.rglob("*.txt")):
+        relative_stem = PurePosixPath(label_file.relative_to(label_root)).with_suffix("")
+        image_file = _find_matching_image(image_root, relative_stem)
+        if not image_file:
+            errors.append(f"{relative_stem}: no matching image under {image_root}")
+            continue
+        try:
+            boxes = []
+            for line_number, line in enumerate(label_file.read_text(encoding="utf-8").splitlines(), 1):
+                if not line.strip():
+                    continue
+                parts = line.split()
+                if len(parts) == 6:
+                    # A leading space before the box fields means the character was never
+                    # recognized/transcribed; keep the box with a placeholder label rather
+                    # than silently dropping it.
+                    character = UNLABELED_CHARACTER
+                    cx_s, cy_s, nw_s, nh_s, flag_s, _box_id = parts
+                elif len(parts) == 7:
+                    character, cx_s, cy_s, nw_s, nh_s, flag_s, _box_id = parts
+                else:
+                    errors.append(f"{relative_stem}:{line_number}: expected 6 or 7 fields, got {len(parts)}")
+                    continue
+                try:
+                    cx, cy, nw, nh = (float(value) for value in (cx_s, cy_s, nw_s, nh_s))
+                    if not all(0 <= value <= 1 for value in (cx, cy, nw, nh)):
+                        raise ValueError
+                    selection_flag = float(flag_s)
+                except ValueError:
+                    errors.append(f"{relative_stem}:{line_number}: invalid box geometry")
+                    continue
+                boxes.append((character, cx, cy, nw, nh, selection_flag >= 1.0))
+
+            storage_key, width, height = save_upload_from_path(image_file)
+            record = Image(
+                dataset_id=dataset.id,
+                storage_key=storage_key,
+                filename=image_file.name,
+                width=width,
+                height=height,
+                uploaded_by=user.id,
+            )
+            db.add(record)
+            db.flush()
+            imported_images += 1
+            for character, cx, cy, nw, nh, selected in boxes:
+                box_w, box_h = nw * width, nh * height
+                box_x, box_y = cx * width - box_w / 2, cy * height - box_h / 2
+                annotation = Annotation(
+                    image_id=record.id,
+                    created_by=user.id,
+                    updated_by=user.id,
+                    x=box_x,
+                    y=box_y,
+                    w=box_w,
+                    h=box_h,
+                    label=character,
+                    status="active" if selected else "review",
+                )
+                db.add(annotation)
+                imported_annotations += 1
+        except (OSError, ValueError) as exc:
+            errors.append(f"{relative_stem}: {exc}")
     db.commit()
     return ImportRead(images_imported=imported_images, annotations_imported=imported_annotations, errors=errors)
 

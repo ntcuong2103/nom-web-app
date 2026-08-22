@@ -109,6 +109,11 @@ class ImportRead(BaseModel):
     errors: list[str] = []
 
 
+class FolderImportRequest(BaseModel):
+    image_root: str
+    label_root: str
+
+
 class ExportRead(BaseModel):
     filename: str
     download_url: str
