@@ -3,7 +3,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from PIL import Image as PILImage
 from sqlalchemy.orm import Session, joinedload
 
-from app.api.deps import current_user
+from app.api.deps import current_user, ensure_dataset_access, require_roles
 from app.core.security import create_access_token, hash_password, verify_password
 from app.db.session import get_db
 from app.models.models import Annotation, AnnotationEvent, Dataset, Image, User
@@ -32,7 +32,7 @@ router = APIRouter()
 def register(payload: RegisterRequest, db: Session = Depends(get_db)) -> Token:
     if db.query(User).filter(User.email == payload.email).first():
         raise HTTPException(status_code=409, detail="Email already registered")
-    user = User(email=payload.email, password_hash=hash_password(payload.password), role=payload.role)
+    user = User(email=payload.email, password_hash=hash_password(payload.password), role="annotator")
     db.add(user)
     db.commit()
     db.refresh(user)
@@ -54,7 +54,7 @@ def me(user: User = Depends(current_user)) -> User:
 
 @router.post("/datasets", response_model=DatasetRead)
 def create_dataset(
-    payload: DatasetCreate, user: User = Depends(current_user), db: Session = Depends(get_db)
+    payload: DatasetCreate, user: User = Depends(require_roles("admin", "annotator")), db: Session = Depends(get_db)
 ) -> Dataset:
     dataset = Dataset(name=payload.name, description=payload.description, created_by=user.id)
     db.add(dataset)
@@ -65,7 +65,10 @@ def create_dataset(
 
 @router.get("/datasets", response_model=list[DatasetRead])
 def list_datasets(user: User = Depends(current_user), db: Session = Depends(get_db)) -> list[Dataset]:
-    return db.query(Dataset).order_by(Dataset.created_at.desc()).all()
+    query = db.query(Dataset)
+    if user.role != "admin":
+        query = query.filter(Dataset.created_by == user.id)
+    return query.order_by(Dataset.created_at.desc()).all()
 
 
 @router.get("/datasets/{dataset_id}", response_model=DatasetRead)
@@ -73,6 +76,7 @@ def get_dataset(dataset_id: int, user: User = Depends(current_user), db: Session
     dataset = db.get(Dataset, dataset_id)
     if not dataset:
         raise HTTPException(status_code=404, detail="Dataset not found")
+    ensure_dataset_access(user, dataset)
     return dataset
 
 
@@ -80,12 +84,14 @@ def get_dataset(dataset_id: int, user: User = Depends(current_user), db: Session
 def update_dataset(
     dataset_id: int,
     payload: DatasetUpdate,
-    user: User = Depends(current_user),
+    user: User = Depends(require_roles("admin", "annotator")),
+
     db: Session = Depends(get_db),
 ):
     dataset = db.get(Dataset, dataset_id)
     if not dataset:
         raise HTTPException(status_code=404, detail="Dataset not found")
+    ensure_dataset_access(user, dataset)
     for key, value in payload.model_dump(exclude_unset=True).items():
         setattr(dataset, key, value)
     db.commit()
@@ -97,11 +103,14 @@ def update_dataset(
 def upload_image(
     dataset_id: int,
     file: UploadFile = File(...),
-    user: User = Depends(current_user),
+    user: User = Depends(require_roles("admin", "annotator")),
+
     db: Session = Depends(get_db),
 ) -> Image:
-    if not db.get(Dataset, dataset_id):
+    dataset = db.get(Dataset, dataset_id)
+    if not dataset:
         raise HTTPException(status_code=404, detail="Dataset not found")
+    ensure_dataset_access(user, dataset)
     storage_key, width, height = save_upload(file)
     image = Image(
         dataset_id=dataset_id,
@@ -147,7 +156,7 @@ def get_image(image_id: int, user: User = Depends(current_user), db: Session = D
 
 
 @router.get("/images/{image_id}/file")
-def get_image_file(image_id: int, db: Session = Depends(get_db)):
+def get_image_file(image_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
     image = db.get(Image, image_id)
     if not image:
         raise HTTPException(status_code=404, detail="Image not found")
@@ -162,6 +171,7 @@ def crop_image(
     w: float,
     h: float,
     size: int = Query(default=128, ge=16, le=512),
+    user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
     image = db.get(Image, image_id)
@@ -292,5 +302,5 @@ def export_yolo(
 
 
 @router.get("/exports/{filename}")
-def download_export(filename: str):
+def download_export(filename: str, user: User = Depends(current_user)):
     return FileResponse(settings.export_dir / filename, filename=filename)

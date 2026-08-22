@@ -14,7 +14,7 @@ class LoginRequest(BaseModel):
 
 
 class RegisterRequest(LoginRequest):
-    role: str = "annotator"
+    pass
 
 
 class UserRead(BaseModel):

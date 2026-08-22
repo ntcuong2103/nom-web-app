@@ -5,14 +5,14 @@ import Link from "next/link";
 import { useMutation } from "@tanstack/react-query";
 import { Download } from "lucide-react";
 import { AppShell } from "@/components/layout/AppShell";
-import { API_BASE, api } from "@/lib/api";
+import { api, downloadExport } from "@/lib/api";
 
 export default function ExportPage({ params }: { params: Promise<{ datasetId: string }> }) {
   const { datasetId } = use(params);
-  const [url, setUrl] = useState("");
+  const [downloaded, setDownloaded] = useState(false);
   const exportMutation = useMutation({
     mutationFn: () => api.exportYolo(datasetId),
-    onSuccess: (result) => setUrl(`${API_BASE}${result.download_url}`)
+    onSuccess: async (result) => { await downloadExport(result.download_url, result.filename); setDownloaded(true); }
   });
 
   return (
@@ -24,7 +24,7 @@ export default function ExportPage({ params }: { params: Promise<{ datasetId: st
           <Download className="h-4 w-4" />
           Generate
         </button>
-        {url ? <a className="font-medium text-clay underline" href={url}>Download export</a> : null}
+        {downloaded ? <p className="font-medium text-moss">Export downloaded.</p> : null}
         <div className="mt-6">
           <Link className="text-sm text-moss underline" href={`/datasets/${datasetId}`}>Back to dataset</Link>
         </div>

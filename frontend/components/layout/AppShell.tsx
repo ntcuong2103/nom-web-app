@@ -1,3 +1,6 @@
+"use client";
+
+import { clearToken } from "@/lib/api";
 import Link from "next/link";
 import { ReactNode } from "react";
 
@@ -11,6 +14,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           </Link>
           <nav className="flex items-center gap-4 text-sm text-moss">
             <Link href="/datasets">Datasets</Link>
+            <button type="button" onClick={() => { clearToken(); window.location.href = "/login"; }}>Log out</button>
           </nav>
         </div>
       </header>

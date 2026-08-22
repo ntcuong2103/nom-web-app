@@ -5,7 +5,7 @@ import { Image as KonvaImage, Layer, Rect, Stage, Transformer } from "react-konv
 import type Konva from "konva";
 import { Hand, MousePointer2, ZoomIn, ZoomOut } from "lucide-react";
 import { Annotation, AnnotationDraft, ImageRecord } from "@/lib/types";
-import { imageFileUrl } from "@/lib/api";
+import { getToken, imageFileUrl } from "@/lib/api";
 
 type Props = {
   image: ImageRecord;
@@ -34,9 +34,21 @@ export function AnnotationCanvas({ image, annotations, selectedId, onSelect, onC
   const imageDisplayHeight = image.height * displayScale;
 
   useEffect(() => {
-    const next = new window.Image();
-    next.src = imageFileUrl(image.id);
-    next.onload = () => setBitmap(next);
+    let objectUrl: string | null = null;
+    let cancelled = false;
+    async function loadImage() {
+      const token = getToken();
+      const response = await fetch(imageFileUrl(image.id), { headers: token ? { Authorization: "Bearer " + token } : undefined });
+      if (!response.ok) return;
+      objectUrl = URL.createObjectURL(await response.blob());
+      if (cancelled) return;
+      const next = new window.Image();
+      next.onload = () => setBitmap(next);
+      next.src = objectUrl;
+    }
+    setBitmap(null);
+    loadImage();
+    return () => { cancelled = true; if (objectUrl) URL.revokeObjectURL(objectUrl); };
   }, [image.id]);
 
   useEffect(() => {
