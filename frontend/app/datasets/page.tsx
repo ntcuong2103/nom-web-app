@@ -3,7 +3,7 @@
 import { FormEvent, useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus } from "lucide-react";
+import { Plus, Upload } from "lucide-react";
 import { AppShell } from "@/components/layout/AppShell";
 import { api } from "@/lib/api";
 
@@ -12,6 +12,12 @@ export default function DatasetsPage() {
   const { data = [], isLoading, error } = useQuery({ queryKey: ["datasets"], queryFn: api.datasets });
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [importDatasetId, setImportDatasetId] = useState("");
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const importMutation = useMutation({
+    mutationFn: () => api.importYolo(importDatasetId, importFile!),
+    onSuccess: () => { setImportFile(null); queryClient.invalidateQueries({ queryKey: ["datasets"] }); }
+  });
   const create = useMutation({
     mutationFn: () => api.createDataset({ name, description: description || null }),
     onSuccess: () => {
@@ -38,6 +44,19 @@ export default function DatasetsPage() {
             Create
           </button>
         </form>
+        <div className="h-fit rounded-md border border-line bg-white p-4">
+          <h2 className="mb-3 font-semibold">Import YOLO archive</h2>
+          <select value={importDatasetId} onChange={(event) => setImportDatasetId(event.target.value)} className="mb-3 w-full rounded border border-line px-3 py-2">
+            <option value="">Choose dataset</option>
+            {data.map((dataset) => <option key={dataset.id} value={dataset.id}>{dataset.name}</option>)}
+          </select>
+          <input type="file" accept=".zip,application/zip" onChange={(event) => setImportFile(event.target.files?.[0] ?? null)} className="mb-3 w-full text-sm" />
+          <button type="button" disabled={!importDatasetId || !importFile || importMutation.isPending} onClick={() => importMutation.mutate()} className="flex items-center gap-2 rounded bg-clay px-3 py-2 text-white disabled:opacity-50">
+            <Upload className="h-4 w-4" /> Import archive
+          </button>
+          {importMutation.isSuccess ? <p className="mt-2 text-sm text-moss">Import completed.</p> : null}
+          {importMutation.isError ? <p className="mt-2 text-sm text-red-700">Import failed.</p> : null}
+        </div>
         <section>
           {isLoading ? <p>Loading datasets...</p> : null}
           {error ? <p className="text-red-700">Sign in to load datasets.</p> : null}

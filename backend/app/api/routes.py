@@ -1,3 +1,7 @@
+import io
+from pathlib import PurePosixPath
+from zipfile import BadZipFile, ZipFile
+
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from PIL import Image as PILImage
@@ -17,6 +21,7 @@ from app.schemas.schemas import (
     DatasetUpdate,
     ExportRead,
     ImageRead,
+    ImportRead,
     LoginRequest,
     RegisterRequest,
     Token,
@@ -297,6 +302,64 @@ def image_events(
         .order_by(AnnotationEvent.created_at.desc())
         .all()
     )
+
+
+@router.post("/datasets/{dataset_id}/import/yolo", response_model=ImportRead)
+def import_yolo(dataset_id: int, file: UploadFile = File(...), user: User = Depends(require_roles("admin", "annotator")), db: Session = Depends(get_db)) -> ImportRead:
+    dataset = db.get(Dataset, dataset_id)
+    if not dataset:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    ensure_dataset_access(user, dataset)
+    try:
+        archive = ZipFile(file.file)
+    except BadZipFile as exc:
+        raise HTTPException(status_code=422, detail="Upload must be a valid ZIP archive") from exc
+    names = {PurePosixPath(name).name: name for name in archive.namelist() if not name.endswith("/")}
+    classes_name = next((name for name in archive.namelist() if PurePosixPath(name).name == "classes.txt"), None)
+    if not classes_name:
+        raise HTTPException(status_code=422, detail="Archive must contain classes.txt")
+    classes = [line.strip() for line in archive.read(classes_name).decode("utf-8").splitlines() if line.strip()]
+    imported_images = 0
+    imported_annotations = 0
+    errors: list[str] = []
+    for name in archive.namelist():
+        path = PurePosixPath(name)
+        if path.suffix.lower() not in {".jpg", ".jpeg", ".png", ".webp"} or path.name == "classes.txt":
+            continue
+        try:
+            image_bytes = archive.read(name)
+            image = PILImage.open(io.BytesIO(image_bytes))
+            image.load()
+            upload = UploadFile(file=io.BytesIO(image_bytes), filename=path.name)
+            storage_key, width, height = save_upload(upload)
+            record = Image(dataset_id=dataset.id, storage_key=storage_key, filename=path.name, width=width, height=height, uploaded_by=user.id)
+            db.add(record)
+            db.flush()
+            imported_images += 1
+            label_name = path.with_suffix(".txt").name
+            label_entry = next((value for key, value in names.items() if PurePosixPath(key).name == label_name), None)
+            if not label_entry:
+                continue
+            for line_number, line in enumerate(archive.read(label_entry).decode("utf-8").splitlines(), 1):
+                parts = line.split()
+                if len(parts) != 5:
+                    errors.append(f"{path.name}:{line_number}: expected 5 YOLO fields")
+                    continue
+                try:
+                    class_id, cx, cy, nw, nh = int(parts[0]), *(float(value) for value in parts[1:])
+                    if class_id < 0 or class_id >= len(classes) or not all(0 <= value <= 1 for value in (cx, cy, nw, nh)):
+                        raise ValueError
+                    box_w, box_h = nw * width, nh * height
+                    box_x, box_y = cx * width - box_w / 2, cy * height - box_h / 2
+                    annotation = Annotation(image_id=record.id, created_by=user.id, updated_by=user.id, x=box_x, y=box_y, w=box_w, h=box_h, label=classes[class_id], status="active")
+                    db.add(annotation)
+                    imported_annotations += 1
+                except (ValueError, IndexError):
+                    errors.append(f"{path.name}:{line_number}: invalid YOLO row")
+        except (OSError, ValueError) as exc:
+            errors.append(f"{path.name}: {exc}")
+    db.commit()
+    return ImportRead(images_imported=imported_images, annotations_imported=imported_annotations, errors=errors)
 
 
 @router.post("/datasets/{dataset_id}/export/yolo", response_model=ExportRead)

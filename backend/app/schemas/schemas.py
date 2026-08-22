@@ -103,6 +103,12 @@ class AnnotationEventRead(BaseModel):
     created_at: datetime
 
 
+class ImportRead(BaseModel):
+    images_imported: int
+    annotations_imported: int
+    errors: list[str] = []
+
+
 class ExportRead(BaseModel):
     filename: str
     download_url: str
