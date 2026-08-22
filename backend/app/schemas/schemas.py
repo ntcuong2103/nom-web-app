@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
@@ -62,7 +63,7 @@ class AnnotationBase(BaseModel):
     w: float = Field(gt=0)
     h: float = Field(gt=0)
     label: str = Field(min_length=1, max_length=255)
-    status: str = "active"
+    status: Literal["active", "review", "deleted"] = "active"
 
 
 class AnnotationCreate(AnnotationBase):
@@ -75,7 +76,7 @@ class AnnotationUpdate(BaseModel):
     w: float | None = Field(default=None, gt=0)
     h: float | None = Field(default=None, gt=0)
     label: str | None = Field(default=None, min_length=1, max_length=255)
-    status: str | None = None
+    status: Literal["active", "review", "deleted"] | None = None
 
 
 class AnnotationRead(AnnotationBase):

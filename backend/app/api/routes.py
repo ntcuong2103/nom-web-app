@@ -27,6 +27,10 @@ from app.services.storage import build_yolo_export, image_path, save_upload, set
 
 router = APIRouter()
 
+def validate_box(image: Image, x: float, y: float, w: float, h: float) -> None:
+    if x < 0 or y < 0 or w <= 0 or h <= 0 or x + w > image.width or y + h > image.height:
+        raise HTTPException(status_code=422, detail="Annotation box must fit within image bounds")
+
 
 @router.post("/auth/register", response_model=Token)
 def register(payload: RegisterRequest, db: Session = Depends(get_db)) -> Token:
@@ -211,8 +215,10 @@ def create_annotation(
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ) -> Annotation:
-    if not db.get(Image, image_id):
+    image = db.get(Image, image_id)
+    if not image:
         raise HTTPException(status_code=404, detail="Image not found")
+    validate_box(image, payload.x, payload.y, payload.w, payload.h)
     annotation = Annotation(image_id=image_id, created_by=user.id, updated_by=user.id, **payload.model_dump())
     db.add(annotation)
     db.flush()
@@ -232,8 +238,11 @@ def update_annotation(
     annotation = db.get(Annotation, annotation_id)
     if not annotation:
         raise HTTPException(status_code=404, detail="Annotation not found")
+    image = db.get(Image, annotation.image_id)
+    values = payload.model_dump(exclude_unset=True)
+    validate_box(image, values.get("x", annotation.x), values.get("y", annotation.y), values.get("w", annotation.w), values.get("h", annotation.h))
     old = annotation_snapshot(annotation)
-    for key, value in payload.model_dump(exclude_unset=True).items():
+    for key, value in values.items():
         setattr(annotation, key, value)
     annotation.updated_by = user.id
     db.flush()
