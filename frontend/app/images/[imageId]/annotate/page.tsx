@@ -14,8 +14,15 @@ const AnnotationCanvas = dynamic(
   { ssr: false }
 );
 
-export default function AnnotatePage({ params }: { params: Promise<{ imageId: string }> }) {
+export default function AnnotatePage({
+  params,
+  searchParams
+}: {
+  params: Promise<{ imageId: string }>;
+  searchParams: Promise<{ focus?: string }>;
+}) {
   const { imageId } = use(params);
+  const { focus } = use(searchParams);
   const queryClient = useQueryClient();
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [labelFilter, setLabelFilter] = useState("");
@@ -46,6 +53,16 @@ export default function AnnotatePage({ params }: { params: Promise<{ imageId: st
       invalidate();
     }
   });
+
+  const [focusApplied, setFocusApplied] = useState(false);
+  useEffect(() => {
+    if (focusApplied || !focus) return;
+    const focusId = Number(focus);
+    if (activeAnnotations.some((annotation) => annotation.id === focusId)) {
+      setSelectedId(focusId);
+      setFocusApplied(true);
+    }
+  }, [activeAnnotations, focus, focusApplied]);
 
   useEffect(() => {
     setLabel(selected?.label ?? "");

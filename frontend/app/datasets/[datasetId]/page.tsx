@@ -3,7 +3,7 @@
 import { ChangeEvent, use, useMemo, useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Download, ImagePlus, Pencil } from "lucide-react";
+import { CheckSquare, Download, ImagePlus, Pencil } from "lucide-react";
 import { AppShell } from "@/components/layout/AppShell";
 import { api } from "@/lib/api";
 
@@ -34,10 +34,16 @@ export default function DatasetDetailPage({ params }: { params: Promise<{ datase
           <h1 className="text-2xl font-semibold">{dataset?.name ?? "Dataset"}</h1>
           <p className="text-sm text-moss">{dataset?.description}</p>
         </div>
-        <Link href={`/datasets/${datasetId}/export`} className="flex items-center gap-2 rounded border border-line bg-white px-3 py-2">
-          <Download className="h-4 w-4" />
-          Export
-        </Link>
+        <div className="flex gap-2">
+          <Link href={`/datasets/${datasetId}/review`} className="flex items-center gap-2 rounded border border-line bg-white px-3 py-2">
+            <CheckSquare className="h-4 w-4" />
+            Review
+          </Link>
+          <Link href={`/datasets/${datasetId}/export`} className="flex items-center gap-2 rounded border border-line bg-white px-3 py-2">
+            <Download className="h-4 w-4" />
+            Export
+          </Link>
+        </div>
       </div>
       <div className="mb-4 grid gap-3 rounded-md border border-line bg-white p-4 md:grid-cols-4">
         <input value={filename} onChange={(event) => setFilename(event.target.value)} className="rounded border border-line px-3 py-2" placeholder="Filename" />

@@ -15,6 +15,7 @@ export type ImageRecord = {
   id: number;
   dataset_id: number;
   filename: string;
+  source_folder: string | null;
   width: number;
   height: number;
   uploaded_by: number;
@@ -33,6 +34,7 @@ export type AnnotationDraft = {
 export type Annotation = AnnotationDraft & {
   id: number;
   image_id: number;
+  confidence: number | null;
   created_by: number;
   updated_by: number;
   created_at: string;
@@ -53,4 +55,40 @@ export type AnnotationEvent = {
 export type ExportResult = {
   filename: string;
   download_url: string;
+};
+
+export type ReviewItem = {
+  id: number;
+  image_id: number;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  label: string;
+  status: string;
+  confidence: number | null;
+  image_filename: string;
+  source_folder: string | null;
+};
+
+export type ReviewList = {
+  items: ReviewItem[];
+  total: number;
+};
+
+export type ReviewFilterParams = {
+  label?: string;
+  folder?: string;
+  status?: string;
+};
+
+export type ReviewPreviousState = {
+  id: number;
+  status: string;
+  label: string;
+};
+
+export type BulkReviewResult = {
+  updated: number;
+  previous: ReviewPreviousState[];
 };

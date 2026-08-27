@@ -3,9 +3,12 @@ import type {
   AnnotationDraft,
   AnnotationEvent,
   AuthToken,
+  BulkReviewResult,
   Dataset,
   ExportResult,
-  ImageRecord
+  ImageRecord,
+  ReviewFilterParams,
+  ReviewList
 } from "@/lib/types";
 
 export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "/api";
@@ -48,6 +51,13 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 function json(method: string, body: unknown): RequestInit {
   return { method, body: JSON.stringify(body) };
+}
+
+export async function fetchAuthedObjectUrl(url: string): Promise<string | null> {
+  const token = getToken();
+  const response = await fetch(url, { headers: token ? { Authorization: "Bearer " + token } : undefined });
+  if (!response.ok) return null;
+  return URL.createObjectURL(await response.blob());
 }
 
 export async function downloadExport(path: string, filename: string) {
@@ -112,11 +122,38 @@ export const api = {
   },
 
   importFolder: (datasetId: string, imageRoot: string, labelRoot: string) =>
-    request<ImportResult>(`/datasets/${datasetId}/import/folder`, json("POST", { image_root: imageRoot, label_root: labelRoot }))
+    request<ImportResult>(`/datasets/${datasetId}/import/folder`, json("POST", { image_root: imageRoot, label_root: labelRoot })),
+
+  reviewList: (datasetId: string, filters: ReviewFilterParams, sort: string | null, limit: number, offset: number) => {
+    const params = new URLSearchParams();
+    if (filters.label) params.set("label", filters.label);
+    if (filters.folder) params.set("folder", filters.folder);
+    if (filters.status) params.set("status", filters.status);
+    if (sort) params.set("sort", sort);
+    params.set("limit", String(limit));
+    params.set("offset", String(offset));
+    return request<ReviewList>(`/datasets/${datasetId}/annotations?${params.toString()}`);
+  },
+
+  bulkApprove: (datasetId: string, target: { ids: number[] } | { all_matching: ReviewFilterParams }) =>
+    request<BulkReviewResult>(`/datasets/${datasetId}/annotations/bulk-review`, json("POST", { action: "approve", target })),
+
+  bulkReject: (datasetId: string, target: { ids: number[] } | { all_matching: ReviewFilterParams }) =>
+    request<BulkReviewResult>(`/datasets/${datasetId}/annotations/bulk-review`, json("POST", { action: "reject", target })),
+
+  bulkRelabel: (datasetId: string, newLabel: string, target: { ids: number[] } | { all_matching: ReviewFilterParams }) =>
+    request<BulkReviewResult>(`/datasets/${datasetId}/annotations/bulk-review`, json("POST", { action: "relabel", new_label: newLabel, target })),
+
+  restoreAnnotations: (datasetId: string, items: { id: number; status: string; label: string }[]) =>
+    request<{ updated: number }>(`/datasets/${datasetId}/annotations/restore`, json("POST", { items }))
 };
 
 type ImportResult = { images_imported: number; annotations_imported: number; errors: string[] };
 
 export function imageFileUrl(imageId: number) {
   return `${API_BASE}/images/${imageId}/file`;
+}
+
+export function cropUrl(imageId: number, x: number, y: number, w: number, h: number, size = 96) {
+  return `${API_BASE}/images/${imageId}/crop?x=${x}&y=${y}&w=${w}&h=${h}&size=${size}`;
 }
