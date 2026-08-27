@@ -1,4 +1,5 @@
 import io
+import os
 from pathlib import Path, PurePosixPath
 from zipfile import BadZipFile, ZipFile
 
@@ -374,6 +375,19 @@ def _find_matching_image(image_root: Path, relative_stem: PurePosixPath) -> Path
     return None
 
 
+def _walk_label_files(label_root: Path) -> list[Path]:
+    # Path.rglob does not descend into symlinked subdirectories (only fixed in Python
+    # 3.13's recurse_symlinks option), and this repo targets 3.12 - a label root built
+    # out of folder symlinks (a real, likely setup here) would otherwise silently match
+    # nothing. os.walk(followlinks=True) covers that case.
+    found: list[Path] = []
+    for dirpath, _dirnames, filenames in os.walk(label_root, followlinks=True):
+        for name in filenames:
+            if name.lower().endswith(".txt"):
+                found.append(Path(dirpath) / name)
+    return sorted(found)
+
+
 @router.post("/datasets/{dataset_id}/import/folder", response_model=ImportRead)
 def import_folder(
     dataset_id: int,
@@ -396,7 +410,7 @@ def import_folder(
     imported_images = 0
     imported_annotations = 0
     errors: list[str] = []
-    for label_file in sorted(label_root.rglob("*.txt")):
+    for label_file in _walk_label_files(label_root):
         relative_stem = PurePosixPath(label_file.relative_to(label_root)).with_suffix("")
         image_file = _find_matching_image(image_root, relative_stem)
         if not image_file:
