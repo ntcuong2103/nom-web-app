@@ -17,6 +17,8 @@ from app.schemas.schemas import (
     AnnotationEventRead,
     AnnotationRead,
     AnnotationUpdate,
+    BulkReviewRequest,
+    BulkReviewResult,
     DatasetCreate,
     DatasetRead,
     DatasetUpdate,
@@ -26,6 +28,12 @@ from app.schemas.schemas import (
     ImportRead,
     LoginRequest,
     RegisterRequest,
+    RestoreResult,
+    ReviewFilter,
+    ReviewItemRead,
+    ReviewListRead,
+    ReviewPreviousState,
+    ReviewRestoreRequest,
     Token,
     UserRead,
 )
@@ -441,13 +449,15 @@ def import_folder(
                 except ValueError:
                     errors.append(f"{relative_stem}:{line_number}: invalid box geometry")
                     continue
-                boxes.append((character, cx, cy, nw, nh, selection_flag >= 1.0))
+                boxes.append((character, cx, cy, nw, nh, selection_flag))
 
             storage_key, width, height = save_upload_from_path(image_file)
+            source_folder = str(relative_stem.parent) if str(relative_stem.parent) != "." else None
             record = Image(
                 dataset_id=dataset.id,
                 storage_key=storage_key,
                 filename=image_file.name,
+                source_folder=source_folder,
                 width=width,
                 height=height,
                 uploaded_by=user.id,
@@ -455,7 +465,7 @@ def import_folder(
             db.add(record)
             db.flush()
             imported_images += 1
-            for character, cx, cy, nw, nh, selected in boxes:
+            for character, cx, cy, nw, nh, confidence in boxes:
                 box_w, box_h = nw * width, nh * height
                 box_x, box_y = cx * width - box_w / 2, cy * height - box_h / 2
                 annotation = Annotation(
@@ -467,7 +477,8 @@ def import_folder(
                     w=box_w,
                     h=box_h,
                     label=character,
-                    status="active" if selected else "review",
+                    status="active" if confidence >= 1.0 else "review",
+                    confidence=confidence,
                 )
                 db.add(annotation)
                 imported_annotations += 1
@@ -475,6 +486,140 @@ def import_folder(
             errors.append(f"{relative_stem}: {exc}")
     db.commit()
     return ImportRead(images_imported=imported_images, annotations_imported=imported_annotations, errors=errors)
+
+
+def _apply_filter(query, filter_: ReviewFilter | None):
+    if filter_ is None:
+        return query
+    if filter_.label:
+        query = query.filter(Annotation.label == filter_.label)
+    if filter_.folder:
+        query = query.filter(Image.source_folder == filter_.folder)
+    if filter_.status:
+        query = query.filter(Annotation.status == filter_.status)
+    return query
+
+
+@router.get("/datasets/{dataset_id}/annotations", response_model=ReviewListRead)
+def list_dataset_annotations(
+    dataset_id: int,
+    label: str | None = None,
+    folder: str | None = None,
+    status: str | None = None,
+    sort: str | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> ReviewListRead:
+    dataset = db.get(Dataset, dataset_id)
+    if not dataset:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    ensure_dataset_access(user, dataset)
+
+    base_query = db.query(Annotation).join(Image, Annotation.image_id == Image.id).filter(
+        Image.dataset_id == dataset_id
+    )
+    filtered = _apply_filter(base_query, ReviewFilter(label=label, folder=folder, status=status))
+    total = filtered.count()
+
+    if sort == "confidence_asc":
+        filtered = filtered.order_by(Annotation.confidence.asc().nullslast())
+    elif sort == "confidence_desc":
+        filtered = filtered.order_by(Annotation.confidence.desc().nullslast())
+    else:
+        filtered = filtered.order_by(Annotation.id.asc())
+
+    rows = filtered.options(joinedload(Annotation.image)).offset(offset).limit(limit).all()
+    items = [
+        ReviewItemRead(
+            id=a.id,
+            image_id=a.image_id,
+            x=a.x,
+            y=a.y,
+            w=a.w,
+            h=a.h,
+            label=a.label,
+            status=a.status,
+            confidence=a.confidence,
+            image_filename=a.image.filename,
+            source_folder=a.image.source_folder,
+        )
+        for a in rows
+    ]
+    return ReviewListRead(items=items, total=total)
+
+
+@router.post("/datasets/{dataset_id}/annotations/bulk-review", response_model=BulkReviewResult)
+def bulk_review(
+    dataset_id: int,
+    payload: BulkReviewRequest,
+    user: User = Depends(require_roles("admin", "annotator")),
+    db: Session = Depends(get_db),
+) -> BulkReviewResult:
+    dataset = db.get(Dataset, dataset_id)
+    if not dataset:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    ensure_dataset_access(user, dataset)
+
+    if payload.action == "relabel" and not payload.new_label:
+        raise HTTPException(status_code=422, detail="new_label is required for the relabel action")
+
+    query = db.query(Annotation).join(Image, Annotation.image_id == Image.id).filter(
+        Image.dataset_id == dataset_id
+    )
+    if payload.target.ids is not None:
+        query = query.filter(Annotation.id.in_(payload.target.ids))
+    elif payload.target.all_matching is not None:
+        query = _apply_filter(query, payload.target.all_matching)
+    else:
+        raise HTTPException(status_code=422, detail="target must specify either ids or all_matching")
+
+    rows = query.all()
+    previous = [ReviewPreviousState(id=a.id, status=a.status, label=a.label) for a in rows]
+    for annotation in rows:
+        if payload.action == "approve":
+            annotation.status = "active"
+        elif payload.action == "reject":
+            annotation.status = "deleted"
+        elif payload.action == "relabel":
+            annotation.label = payload.new_label
+        annotation.updated_by = user.id
+    db.commit()
+    return BulkReviewResult(updated=len(rows), previous=previous)
+
+
+@router.post("/datasets/{dataset_id}/annotations/restore", response_model=RestoreResult)
+def restore_annotations(
+    dataset_id: int,
+    payload: ReviewRestoreRequest,
+    user: User = Depends(require_roles("admin", "annotator")),
+    db: Session = Depends(get_db),
+) -> RestoreResult:
+    dataset = db.get(Dataset, dataset_id)
+    if not dataset:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    ensure_dataset_access(user, dataset)
+
+    ids = [item.id for item in payload.items]
+    rows = (
+        db.query(Annotation)
+        .join(Image, Annotation.image_id == Image.id)
+        .filter(Image.dataset_id == dataset_id, Annotation.id.in_(ids))
+        .all()
+    )
+    by_id = {a.id: a for a in rows}
+    updated = 0
+    for item in payload.items:
+        annotation = by_id.get(item.id)
+        if not annotation:
+            continue
+        annotation.status = item.status
+        annotation.label = item.label
+        annotation.updated_by = user.id
+        updated += 1
+    db.commit()
+    return RestoreResult(updated=updated)
 
 
 @router.post("/datasets/{dataset_id}/export/yolo", response_model=ExportRead)

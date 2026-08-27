@@ -51,6 +51,7 @@ class ImageRead(BaseModel):
     id: int
     dataset_id: int
     filename: str
+    source_folder: str | None = None
     width: int
     height: int
     uploaded_by: int
@@ -84,6 +85,7 @@ class AnnotationRead(AnnotationBase):
 
     id: int
     image_id: int
+    confidence: float | None = None
     created_by: int
     updated_by: int
     created_at: datetime
@@ -117,3 +119,64 @@ class FolderImportRequest(BaseModel):
 class ExportRead(BaseModel):
     filename: str
     download_url: str
+
+
+class ReviewItemRead(BaseModel):
+    id: int
+    image_id: int
+    x: float
+    y: float
+    w: float
+    h: float
+    label: str
+    status: Literal["active", "review", "deleted"]
+    confidence: float | None
+    image_filename: str
+    source_folder: str | None
+
+
+class ReviewListRead(BaseModel):
+    items: list[ReviewItemRead]
+    total: int
+
+
+class ReviewFilter(BaseModel):
+    label: str | None = None
+    folder: str | None = None
+    status: Literal["active", "review", "deleted"] | None = None
+
+
+class ReviewTarget(BaseModel):
+    ids: list[int] | None = None
+    all_matching: ReviewFilter | None = None
+
+
+class BulkReviewRequest(BaseModel):
+    action: Literal["approve", "reject", "relabel"]
+    new_label: str | None = Field(default=None, min_length=1, max_length=255)
+    target: ReviewTarget
+
+
+class ReviewPreviousState(BaseModel):
+    id: int
+    status: str
+    label: str
+
+
+class BulkReviewResult(BaseModel):
+    updated: int
+    previous: list[ReviewPreviousState]
+
+
+class ReviewRestoreItem(BaseModel):
+    id: int
+    status: Literal["active", "review", "deleted"]
+    label: str = Field(min_length=1, max_length=255)
+
+
+class ReviewRestoreRequest(BaseModel):
+    items: list[ReviewRestoreItem]
+
+
+class RestoreResult(BaseModel):
+    updated: int
